@@ -56,7 +56,19 @@
           <button id="pFavBtn" class="info-btn fav-btn" title="收藏这部短剧" hidden>★ 收藏</button>
         </div>
       </div>
-      <button id="pClose" class="icon-btn">✕</button>
+      <!-- 按钮组：网页全屏在左，关闭在右 -->
+      <div class="head-btns">
+        <!-- 网页全屏：只切「网页内的占满视口」，不请求浏览器原生全屏；
+             视频仍由 .video-box 的 object-fit: contain 保持原比例 -->
+        <button id="pFull" class="icon-btn" title="网页全屏" aria-label="网页全屏" aria-pressed="false">
+          <svg class="ic-full" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+            <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"
+                  fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+        <button id="pClose" class="icon-btn">✕</button>
+      </div>
     </div>
     <!-- 简介气泡：默认隐藏，hover「简介」时由 CSS 显示 -->
     <div id="pInfoPop" class="info-pop" role="tooltip" hidden></div>

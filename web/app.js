@@ -1114,11 +1114,30 @@
     if (e.key === 'Escape' && !libModal.hidden) libModal.hidden = true;
   });
 
+  // ---------- 网页全屏 ----------
+  // 只把播放器卡片铺满浏览器视口，不调用 requestFullscreen()。
+  // 原因：原生全屏会隐藏标签栏、且系统 Esc 直接退出全屏（我们的 Esc 还要
+  // 用来关闭选集卡片与简介气泡），行为不可控；铺满视口已能满足「看全画面」需求。
+  const pFullBtn = $('pFull');
+  // 关闭播放器时必须复位，否则下次打开会「莫名其妙」仍是全屏
+  let veFull = false;
+  function setVeFull(on) {
+    veFull = !!on;
+    playerEl.classList.toggle('ve-full', veFull);
+    pFullBtn.setAttribute('aria-pressed', veFull ? 'true' : 'false');
+    pFullBtn.title = veFull ? '退出网页全屏' : '网页全屏';
+  }
+  pFullBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setVeFull(!veFull);
+  });
+
   $('pClose').addEventListener('click', () => {
     videoEl.pause();
     videoEl.removeAttribute('src');
     videoEl.load();
     playerEl.hidden = true;
+    setVeFull(false); // 复位全屏，避免下次打开时残留
     ctx.episodes = [];
     ctx.index = -1;
     $('pEpGrid').innerHTML = '';

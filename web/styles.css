@@ -360,6 +360,70 @@ body {
 .modal-head h3 { margin: 0; font-size: 17px; }
 .modal-head p { margin: 3px 0 0; font-size: 13px; }
 
+/* 右上角按钮组：网页全屏 + 关闭，纵向居中对齐标题行 */
+.head-btns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+/* 网页全屏按钮：仅图标，hover 时加深描边 */
+.icon-btn .ic-full {
+  display: block;
+  pointer-events: none;
+}
+/* 激活态：按钮底色与描边点亮，四角箭头同时高亮以示「可退出全屏」。
+   不用 CSS 的 d: path() 改路径（SVG2，部分浏览器不支持），改为整体变色。 */
+#pFull[aria-pressed="true"] {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: var(--bg-elev2);
+}
+
+/* ---------- 网页全屏 ----------
+   「全屏」指播放器卡片占满浏览器视口，不是请求浏览器原生全屏
+   （原生全屏会隐藏标签栏、且 Esc 会直接退出全屏，与只需铺满窗口的需求不符）。
+   卡片用 fixed 贴合视口四边；遮罩同步隐藏，避免出现可点击的空隙。 */
+.modal.ve-full {
+  padding: 0;
+  background: none;
+  backdrop-filter: none;
+}
+.modal.ve-full .modal-card {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 16px;
+  transition: border-radius .2s, padding .2s;
+}
+/* 全屏时视频区吃掉剩余高度：flex:1 + min-height:0 是关键，
+   后者允许 flex 子项收缩，否则被 video-box 的 aspect-ratio 撑破容器。 */
+.modal.ve-full .video-box {
+  max-height: none;
+  margin: 10px auto;
+  flex: 1;
+  min-height: 0;
+  /* 宽高比交给 object-fit: contain 维持，这里必须让容器随视口自由变形，
+     否则 16/9 会与「占满剩余高度」互相打架，导致上下留黑或溢出 */
+  aspect-ratio: auto;
+  border-radius: 8px;
+}
+.modal.ve-full .video-box video {
+  /* 保持原比例、不裁切、不拉伸，铺满容器后居中留边 */
+  object-fit: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal.ve-full .modal-card,
+  .modal.ve-full .video-box { transition: none; }
+}
+
 /* 标题行：剧名 + 简介按钮 */
 .title-row {
   display: flex;
