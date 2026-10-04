@@ -1,7 +1,31 @@
 # 红果短剧 · 网页版
 ---
 
-## 一键启动
+## 一、先下载仓库
+
+启动前先把整个仓库下载到本地（或把仓库克隆到本地），后续步骤都基于这份本地代码。
+
+```bash
+# 克隆仓库
+git clone https://github.com/sunnysky123/hongguo-web.git
+
+# 或直接下载 ZIP 压缩包
+# https://github.com/sunnysky123/hongguo-web/archive/refs/heads/main.zip
+```
+
+下载完成后进入目录，确认结构完整：
+
+```bash
+cd hongguo-web
+ls
+```
+
+应能看到 `web/`、`server/`、`signer/`、`scripts/`、`capture/` 等目录。
+`signer/` 自带了签名服务与 Windows JRE，体积较大，克隆需耐心等待。
+
+---
+
+## 二、一键启动
 
 ### Windows
 
