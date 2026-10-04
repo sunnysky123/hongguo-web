@@ -27,29 +27,6 @@
     scripts\install-jre.bat         补装 Java 运行时
     scripts\stop.bat                停止全部服务
 
-### PowerShell 版
-
-每个 `.bat` 都有等价的 PowerShell 版本，行为与输出一致。
-在 PowerShell 5.1（Win10/11 自带）和 PowerShell 7+ 下均可运行。
-
-    .\scripts\start.ps1                            # 完整（签名 + API）
-    .\scripts\start.ps1 -NoSign                    # 仅 API
-    .\scripts\start.ps1 -SignOnly                  # 仅签名服务
-    .\scripts\sign.ps1 -Port 9098                  # 指定签名端口
-    .\scripts\install-node.ps1 -Force              # 装 Node.js LTS，跳过确认
-    .\scripts\install-jre.ps1 -Force               # 装 Java 运行时，跳过确认
-    .\scripts\stop.ps1                             # 停止全部服务
-
-首次运行若提示脚本被禁止执行，先放开当前用户限制：
-
-    Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-
-也可以只对这一次调用放开：
-
-    powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
-
-`.bat` 与 `.ps1` 功能完全等价，**双击请继续用 `.bat`**（`.ps1` 双击默认是用记事本打开）。
-
 ### Linux / macOS
 
     scripts/start.sh                # 完整（签名 + API）
@@ -117,7 +94,6 @@ hongguo-web/
 ├── scripts/
 │   ├── start.bat              Windows 一键启动
 │   ├── start.sh / stop.sh     Linux / macOS
-│   ├── *.ps1                  PowerShell 版（与同名 .bat 等价）
 │   └── launcher.js            跨平台启动器（核心）
 ├── signer/
 │   ├── unidbg-sign.jar      unidbg 签名服务（跨平台 fat JAR）
