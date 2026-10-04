@@ -18,16 +18,6 @@
     scripts\install-jre.bat         补装 Java 运行时
     scripts\stop.bat                停止全部服务
 
-**中文显示乱码时**：
-
-    scripts\fix-encoding.bat        一键修复所有 bat 的 BOM / CRLF
-    scripts\start-ascii.bat         纯 ASCII 启动器，乱码时直接用这个
-
-`cmd.exe` 按系统 OEM 代码页（简体中文为 936/GBK）解析 `.bat`，
-UTF-8 无 BOM 时中文会读错，脚本内的 `chcp 65001` 无法补救（它只影响运行时输出）。
-官方包内的脚本均已带 BOM + CRLF；`start-ascii.bat` / `fix-encoding.bat`
-更是零非 ASCII 字节，即使解压工具剥离 BOM 也始终可读可用。
-
 ### Linux / macOS
 
     scripts/start.sh                # 完整（签名 + API）
@@ -94,8 +84,6 @@ UTF-8 无 BOM 时中文会读错，脚本内的 `chcp 65001` 无法补救（它�
 hongguo-web/
 ├── scripts/
 │   ├── start.bat              Windows 一键启动
-│   ├── start-ascii.bat        纯 ASCII 启动器（乱码兜底）
-│   ├── fix-encoding.bat       bat 编码一键修复
 │   ├── start.sh / stop.sh     Linux / macOS
 │   └── launcher.js            跨平台启动器（核心）
 ├── signer/
@@ -105,6 +93,14 @@ hongguo-web/
 ├── server/src/              Node.js 后端（8 模块，零依赖）
 └── web/                     前端静态资源
 ```
+
+---
+
+## 致谢
+
+本项目的逆向分析思路与部分实现，参考自以下开源项目：
+
+- **[hongguo-desktop-releases](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases)** —— 桌面端版本，提供了本项目最初的分析起点与对照实现，感谢原作者的分享。
 
 ---
 

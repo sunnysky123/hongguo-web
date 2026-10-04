@@ -85,13 +85,6 @@ fi
 find "$STAGE/$NAME/scripts" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
 find "$STAGE/$NAME/scripts" -name '*.js' -exec chmod +x {} + 2>/dev/null || true
 
-# Windows 批处理必须是「UTF-8 with BOM + CRLF」，否则中文 Windows 下 cmd 会读成乱码。
-# tar 复制不会破坏编码，但源文件若被手工编辑过则可能退化，故在此统一兜底修正。
-# 用与运行期同一份 fix-encoding.js，避免 shell / JS 两套实现漂移。
-if [ -f "$STAGE/$NAME/scripts/fix-encoding.js" ] && command -v node >/dev/null 2>&1; then
-  node "$STAGE/$NAME/scripts/fix-encoding.js" >/dev/null
-fi
-
 ( cd "$STAGE" && zip -qr9 "$OUT" "$NAME" )
 
 echo
@@ -127,22 +120,4 @@ if [ "$WITH_JRE" = 1 ]; then
   done
 else
   echo "  ℹ️  未包含 JRE（目标机需自备 Java 17+，推荐 25 LTS）"
-fi
-
-echo
-echo "=== 校验 bat 编码（须 UTF-8 BOM + CRLF，否则 Windows 下乱码）==="
-# 直接跑 stage 内的检查器：其 ROOT 由 __dirname 推导，恰好就是包根目录。
-# 它同时断言 start-ascii.bat / fix-encoding.bat 零非 ASCII 字节（BOM 不计）。
-if ! command -v node >/dev/null 2>&1; then
-  echo "  ❌ 未找到 node，无法校验 bat 编码，已中止打包"
-  exit 1
-fi
-if [ ! -f "$STAGE/$NAME/scripts/fix-encoding.js" ]; then
-  echo "  ❌ 缺失 scripts/fix-encoding.js，已中止打包"
-  exit 1
-fi
-if ! node "$STAGE/$NAME/scripts/fix-encoding.js" --check | sed 's/^/  /'; then
-  echo "  ❌ bat 编码/纯 ASCII 校验未通过，已中止打包"
-  rm -f "$OUT"
-  exit 1
 fi
