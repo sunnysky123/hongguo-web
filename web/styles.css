@@ -1,0 +1,849 @@
+/* 红果短剧 · 网页版 —— 样式
+   设计取向：暗色为主、卡片式剧集网格、粘性顶栏、移动端优先且桌面端自适应。 */
+
+:root {
+  --bg: #0e0f13;
+  --bg-elev: #171922;
+  --bg-elev2: #1f2230;
+  --line: #2a2e3d;
+  --fg: #eef0f6;
+  --fg-dim: #a3a9bd;
+  --fg-mute: #6f768c;
+  --brand: #ff2e4d;
+  --brand-2: #ff6b3d;
+  --accent: #ffd166;
+  --ok: #35d07f;
+  --err: #ff5c5c;
+  --radius: 12px;
+  --shadow: 0 6px 24px rgba(0, 0, 0, .38);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
+
+html[data-theme="light"] {
+  --bg: #f5f6fa;
+  --bg-elev: #ffffff;
+  --bg-elev2: #eef0f6;
+  --line: #dfe3ee;
+  --fg: #171a22;
+  --fg-dim: #4d5468;
+  --fg-mute: #858c9f;
+  --shadow: 0 6px 20px rgba(20, 25, 45, .10);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+        "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 16px;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(180%) blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+.logo {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  background: linear-gradient(92deg, var(--brand), var(--brand-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.sub { color: var(--fg-mute); font-size: 12px; }
+
+.tabs { display: flex; gap: 4px; flex: 1; min-width: 0; overflow-x: auto; }
+.tab {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: .16s;
+}
+.tab:hover { color: var(--fg); background: var(--bg-elev2); }
+.tab.active {
+  color: #fff;
+  background: linear-gradient(92deg, var(--brand), var(--brand-2));
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.topbar-right { display: flex; align-items: center; gap: 8px; }
+
+/* 搜索框 + 搜索按钮成组，避免按钮把输入框挤变形 */
+.search-box {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 3px 3px 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  transition: .16s;
+}
+.search-box:focus-within { border-color: var(--brand); }
+
+#search {
+  width: 170px;
+  padding: 6px 4px 6px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  outline: none;
+}
+/* 去掉 type=search 的原生清除按钮，避免与搜索按钮风格割裂 */
+#search::-webkit-search-cancel-button { display: none; }
+#search:focus { width: 200px; }
+
+.search-btn {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: linear-gradient(92deg, var(--brand), var(--brand-2));
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .16s;
+}
+.search-btn:hover { filter: brightness(1.1); }
+.search-btn:active { transform: scale(.97); }
+/* 宽屏显示「搜索」文字；放大镜图标仅在窄屏媒体查询里启用 */
+.search-btn .ic-search { display: none; }
+
+.icon-btn {
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 15px;
+  transition: .16s;
+}
+.icon-btn:hover { color: var(--fg); border-color: var(--brand); }
+
+.btn {
+  padding: 8px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 14px;
+  transition: .16s;
+}
+.btn:hover { border-color: var(--brand); }
+.btn.primary {
+  background: linear-gradient(92deg, var(--brand), var(--brand-2));
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+/* ---------- 主视图 ---------- */
+.view {
+  flex: 1;
+  padding: 18px 16px calc(28px + var(--safe-b));
+  max-width: 1400px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 14px;
+  flex-wrap: wrap;
+}
+.section-head h2 { margin: 0; font-size: 18px; font-weight: 700; }
+.section-head .muted { font-size: 13px; }
+
+.chips { display: flex; gap: 7px; flex-wrap: wrap; }
+.chip {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: .16s;
+}
+.chip:hover { color: var(--fg); }
+.chip.on {
+  background: var(--brand);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 16px 14px;
+}
+@media (max-width: 520px) {
+  .grid { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 14px 10px; }
+}
+
+.card { cursor: pointer; transition: transform .16s; }
+.card:hover { transform: translateY(-3px); }
+.card .poster {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow);
+}
+.card .poster img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.card .poster .ph {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  color: var(--fg-mute);
+  font-size: 12px;
+  background: linear-gradient(150deg, var(--bg-elev2), var(--bg-elev));
+}
+.card .badge {
+  position: absolute;
+  top: 7px; left: 7px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .68);
+  color: #fff;
+  font-size: 11px;
+  backdrop-filter: blur(4px);
+}
+.card .eps {
+  position: absolute;
+  right: 7px; bottom: 7px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .68);
+  color: #fff;
+  font-size: 11px;
+}
+/*
+ * 「看到第 N 集」进度角标。
+ * 看过但没看完的剧标出来，用户点卡片时才会知道是续播而非从头播。
+ * 放在封面左上角（.badge 在左上和 .eps 在右下都不冲突的话会重叠，
+ * 所以这里用底部左侧，视觉上与右下角的集数形成对角平衡）。
+ */
+.card .seen {
+  position: absolute;
+  left: 7px; bottom: 7px;
+  max-width: calc(100% - 14px);
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .68);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(4px);
+}
+.card .title {
+  margin: 8px 0 2px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.card .tags {
+  color: var(--fg-mute);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.loading, .empty {
+  padding: 60px 0;
+  text-align: center;
+  color: var(--fg-mute);
+}
+.empty .big { font-size: 40px; display: block; margin-bottom: 10px; }
+
+.load-more { display: grid; place-items: center; padding: 26px 0; }
+
+/* ---------- 状态栏 ---------- */
+.statusbar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 16px calc(7px + var(--safe-b));
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--fg-dim);
+}
+.grow { flex: 1; }
+.muted { color: var(--fg-mute); }
+.err { color: var(--err); }
+.ok { color: var(--ok); }
+
+/* ---------- 弹层 ---------- */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .68);
+  backdrop-filter: blur(6px);
+}
+.modal[hidden] { display: none; }
+.modal-card {
+  width: min(880px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+}
+.modal-card.narrow { width: min(480px, 100%); }
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.modal-head h3 { margin: 0; font-size: 17px; }
+.modal-head p { margin: 3px 0 0; font-size: 13px; }
+
+/* 标题行：剧名 + 简介按钮 */
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.title-row h3 {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 「简介」按钮。
+ * 之前简介文字直接跟在剧名后面（常驻），而 playAt 里的二次刷新会把它清掉，
+ * 于是标题行高度在首帧与后续帧之间来回跳。现改为默认完全隐藏，
+ * 只有鼠标悬停/聚焦此按钮才浮出气泡 —— 标题行高度恒定，不再抖动。
+ */
+.info-btn {
+  flex-shrink: 0;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .14s;
+}
+.info-btn:hover, .info-btn:focus-visible {
+  color: var(--brand);
+  border-color: var(--brand);
+  outline: none;
+}
+.info-btn[hidden] { display: none; }
+
+/* 简介气泡：fixed 定位，脱离 .modal-card 的 overflow 裁剪 */
+.info-pop {
+  position: fixed;
+  z-index: 95;
+  width: min(400px, calc(100vw - 32px));
+  max-height: 34vh;
+  overflow: auto;
+  padding: 10px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  /* 允许鼠标移入气泡阅读（配合 JS 的延迟关闭），移出后才隐藏 */
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity .14s, transform .14s;
+}
+.info-pop:not([hidden]) { opacity: 1; transform: translateY(0); }
+.info-pop[hidden] { display: none; }
+
+/*
+ * 视频容器：用固定宽高比撑起占位。
+ * 之前 video 直接挂在 modal-card 里，加载前按默认 2:1 渲染、
+ * 加载后按真实分辨率重排，导致弹层高度和下方元素来回跳。
+ * 容器固定 aspect-ratio 后，video 用 object-fit: contain 填满，
+ * 加载前后外框尺寸完全一致；不同分辨率的剧集之间切换也不会跳。
+ *
+ * 比例 16:9 —— 按横屏短剧设定。object-fit: contain 保证竖屏源
+ * 也能完整显示（左右留黑边），不会裁掉画面或拉伸变形。
+ * max-height 限制高度，桌面端小窗口下不撑破弹层。
+ */
+.video-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 58vh;
+  /* 比例受 max-height 约束时，居中而非拉伸，避免左右溢出 */
+  margin: 12px auto 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #000;
+}
+.video-box video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border-radius: 0;
+  background: #000;
+  object-fit: contain;
+  outline: none;
+}
+
+/* 视频下方的操作行：左=集数按钮，中=播放状态，右=连播开关
+   用三列 grid 而非 flex+space-between：左右两个按钮宽度不同
+   （「第 12 集 ▾」比「连播 开」宽），space-between 下状态文本
+   只会填满剩余空间而非真正居中。
+
+   两侧列必须等宽（1fr 1fr 1fr）才能让中列真正落在整行正中：
+   若写成 auto 1fr auto，剩余空间按左右实际宽度瓜分
+   （实测 78.5px vs 72.6px），中列中心会偏移 3px。
+   现在两侧各占 1/3、按钮在自己的列内贴边（start/end），
+   中列无论文字长短都严格居中。 */
+.player-foot {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+.player-foot #pStatus {
+  margin: 0;
+  min-width: 0;
+  /* 状态文案可能较长，限制两行避免把两侧按钮挤出可视区 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  /* 关键：固定两行高。状态文案会在「解密中」→「播放结束」→
+     解码兜底长提示之间切换，行数一变就会把整个弹层顶高/压低，
+     表现为加载瞬间的布局抖动。这里锁死两行（2 × 1.5 行距），
+     无论 1 行还是 2 行，占位完全一致。 */
+  min-height: 3em;
+  line-height: 1.5;
+  /* 在中列内水平居中 */
+  text-align: center;
+  align-self: center;
+}
+/* 左右两列的按钮贴边 */
+.ep-btn { justify-self: start; }
+.auto-next { justify-self: end; }
+.auto-next {
+  flex-shrink: 0;
+  padding: 6px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .16s;
+}
+.auto-next:hover { color: var(--fg); border-color: var(--brand); }
+.auto-next.on { color: var(--brand); border-color: var(--brand); background: transparent; font-weight: 600; }
+
+/* ---------- 集数按钮与选集卡片 ----------
+   原来视频上方是一条横向剧集条（.ep-strip），集数多时占两行、
+   把视频挤到视口外。现改为视频下方一个集数按钮 + 点击展开的选集卡片。 */
+.ep-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .16s;
+}
+.ep-btn:hover { border-color: var(--brand); color: var(--brand); }
+.ep-btn:focus-visible { outline: none; border-color: var(--brand); color: var(--brand); }
+.ep-btn[hidden] { display: none; }
+.ep-caret { font-size: 10px; opacity: .6; }
+
+.ep-card {
+  position: fixed;
+  z-index: 96;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow);
+}
+.ep-card[hidden] { display: none; }
+.ep-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding: 0 2px;
+  color: var(--fg-mute);
+  font-size: 12px;
+}
+.ep-card-x {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.ep-card-x:hover { color: var(--fg); border-color: var(--brand); }
+
+/* 一行五个集数按钮；集数多时卡片内纵向滚动，不撑破弹层 */
+.ep-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 44px);
+  gap: 6px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+.epx {
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-size: 13px;
+  text-align: center;
+  cursor: pointer;
+  transition: .14s;
+}
+.epx:hover { color: var(--fg); border-color: var(--brand); }
+.epx.on { background: var(--brand); border-color: transparent; color: #fff; font-weight: 600; }
+
+/* ============================================================
+   历史 / 收藏
+   ============================================================ */
+
+/*
+ * 顶栏右侧的图标按钮组。
+ *
+ * 加了历史/收藏两个按钮后，这组在窄屏上会把整条顶栏撑破
+ * （实测 390px 视口下 .topbar-right 右边界到 416px，溢出 26px，
+ * 页面出现横向滚动）。原因是 .topbar 是 flex 且不换行，
+ * 右侧一组又是 flex-shrink 默认 1 但内部子项都写死了宽度，
+ * 一旦总宽超过可用空间就会溢出而不是收缩。
+ *
+ * 处理：右侧整组允许收缩 + 内部按钮可压缩；搜索框设 min-width:0
+ * 并让输入框真正可伸缩（flex:1），这样窄屏下优先压缩输入框宽度，
+ * 图标按钮始终保持可点面积。
+ */
+.topbar-right { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.topbar-right .icon-btn { flex-shrink: 0; }
+.search-box { min-width: 0; }
+#search { min-width: 0; flex: 1 1 auto; }
+
+/* 播放器标题行里的「收藏」按钮：与「简介」按钮同排，形状复用 .info-btn */
+.fav-btn.on {
+  color: var(--brand);
+  border-color: var(--brand);
+  background: rgba(255, 46, 77, .12);
+  font-weight: 600;
+}
+
+/* 弹层头部右侧的一行按钮（清空 + 关闭） */
+.row-inline { display: flex; align-items: center; gap: 8px; }
+
+/* 小号按钮：历史/收藏列表与弹层头部共用 */
+.mini-btn {
+  flex-shrink: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-elev);
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .14s;
+}
+.mini-btn:hover { color: var(--fg); border-color: var(--brand); }
+.mini-btn.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+.mini-btn.primary:hover { filter: brightness(1.1); color: #fff; }
+.mini-btn.danger:hover { color: var(--err); border-color: var(--err); }
+
+/* 弹层顶部说明：交代数据存在本机、不上传 */
+.lib-hint { margin: 0 0 12px; font-size: 12px; }
+
+/* 列表型弹层比播放器窄一档：880px 留给视频，列表 640px 更耐看 */
+#libModal .modal-card { width: min(640px, 100%); }
+
+.lib-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 58vh;
+  overflow-y: auto;
+  /* 列表滚动时把内容与滚动条让开，避免贴边 */
+  padding-right: 2px;
+}
+
+/*
+ * 单条记录：竖版封面（与搜索结果卡片同比例，视觉统一）+ 剧名/集数 + 操作。
+ * grid 三列：固定宽度封面 / 1fr 信息（可省略）/ auto 操作。
+ */
+.lib-item {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  transition: border-color .14s;
+}
+.lib-item:hover { border-color: var(--brand); }
+
+/* 封面：搜索结果用 .card .poster 才生效，这里需自带一份 */
+.lib-item .poster {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elev2);
+}
+.lib-item .poster img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-item .poster .ph {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  color: var(--fg-mute);
+  font-size: 11px;
+  background: linear-gradient(150deg, var(--bg-elev2), var(--bg-elev));
+}
+
+.lib-meta { min-width: 0; }
+.lib-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  /* 剧名可能很长：单行省略，保持行高稳定（避免多行把记录撑高） */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lib-prog { margin: 0; font-size: 12px; color: var(--fg-mute); }
+.lib-prog b { color: var(--brand); font-weight: 600; }
+
+.lib-ops { display: flex; align-items: center; gap: 6px; }
+
+/* 窄屏（手机竖屏）：封面 + 信息一行，操作按钮换到第二行铺满 */
+@media (max-width: 560px) {
+  .lib-item { grid-template-columns: 56px minmax(0, 1fr); }
+  .lib-ops {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+  }
+}
+
+/* ============================================================
+   密钥获取状态
+   ============================================================ */
+
+/*
+ * 密钥卡片里的状态行。
+ *
+ * 之前取不到密钥时只有一张空输入框，用户既不知道服务在不在跑、
+ * 也没法重试，只能手动复制粘贴。这里把「正在做什么」讲清楚：
+ * 蓝色=正在取，橙色=取不到但还在重试，红色=重试用尽需人工介入。
+ */
+.key-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 8px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.key-state[hidden] { display: none; }
+.key-state[data-state="loading"] {
+  border-color: var(--brand);
+  color: var(--brand);
+  background: rgba(255, 46, 77, .08);
+}
+.key-state[data-state="warn"] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 209, 102, .10);
+}
+.key-state[data-state="error"] {
+  border-color: var(--err);
+  color: var(--err);
+  background: rgba(255, 92, 92, .10);
+}
+
+/* 加载指示：一个小圆环，纯 CSS 旋转，无需额外资源 */
+.key-spin {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  opacity: .85;
+  animation: key-spin .7s linear infinite;
+}
+.key-state[data-state="error"] .key-spin { animation: none; }
+@keyframes key-spin { to { transform: rotate(360deg); } }
+
+/* 尊重系统的「减少动态效果」设置 */
+@media (prefers-reduced-motion: reduce) {
+  .key-spin { animation: none; }
+}
+
+/* 「重新获取」按钮独占一行，与上面的输入框组区分开 */
+#keyRetry[hidden] { display: none; }
+#keyRetry:disabled { opacity: .55; cursor: default; }
+
+.row { display: flex; gap: 8px; margin: 10px 0; }
+.row input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font-size: 13px;
+  outline: none;
+}
+.row input:focus { border-color: var(--brand); }
+
+/* ---------- Toast ---------- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 74px;
+  transform: translateX(-50%);
+  z-index: 90;
+  max-width: 84vw;
+  padding: 10px 18px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+  text-align: center;
+}
+.toast[hidden] { display: none; }
+
+@media (max-width: 640px) {
+  .sub { display: none; }
+  #search { width: 110px; }
+  #search:focus { width: 140px; }
+  .search-btn { padding: 6px 11px; font-size: 12px; }
+  .brand .logo { font-size: 18px; }
+  .video-box { max-height: 46vh; }
+}
+
+/*
+ * 极窄屏（<=430px）：顶栏元素已经很多（品牌 + 分类 + 搜索 + 4 个图标按钮），
+ * 再按原宽度排必然溢出。这里做两件事：
+ *   1) 搜索按钮只留放大镜图标，省下约 34px；
+ *   2) 图标按钮缩到 30px，并让输入框可以真正压到很窄仍不溢出。
+ * 分类标签 .tabs 已有 overflow-x:auto，自己内部滚动，不参与挤压。
+ */
+@media (max-width: 430px) {
+  .topbar { gap: 10px; padding: 10px 12px; }
+  .topbar-right { gap: 6px; }
+  .topbar-right .icon-btn { width: 30px; height: 30px; font-size: 14px; border-radius: 9px; }
+  .search-btn { padding: 6px 9px; }
+  .search-btn .tx-search { display: none; }
+  .search-btn .ic-search { display: inline; font-size: 13px; }
+  #search { width: 84px; padding-left: 11px; font-size: 13px; }
+  #search:focus { width: 110px; }
+}

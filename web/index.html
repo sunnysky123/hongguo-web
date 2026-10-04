@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>红果短剧 · 网页版</title>
+<!-- 相对路径：file:// 直接打开时也能解析到静态层提供的内联 SVG -->
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">红果</span>
+    <span class="sub">短剧 · 网页版</span>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="home">推荐</button>
+    <button class="tab" data-tab="rank">榜单</button>
+    <button class="tab" data-tab="latest">最新</button>
+    <button class="tab" data-tab="browse">筛选</button>
+  </nav>
+  <div class="topbar-right">
+    <div class="search-box">
+      <input id="search" type="search" placeholder="搜索剧名…" autocomplete="off">
+      <button id="searchBtn" class="search-btn" title="搜索（回车）">
+        <span class="ic-search" aria-hidden="true">🔍</span><span class="tx-search">搜索</span>
+      </button>
+    </div>
+    <button id="histBtn" class="icon-btn" title="播放历史">🕘</button>
+    <button id="favBtn" class="icon-btn" title="我的收藏">★</button>
+    <button id="themeBtn" class="icon-btn" title="切换主题">◐</button>
+    <button id="keyBtn" class="icon-btn" title="链路密钥">🔑</button>
+  </div>
+</header>
+
+<main id="view" class="view"><div class="loading">加载中…</div></main>
+
+<footer class="statusbar">
+  <span id="status">就绪</span>
+  <span class="grow"></span>
+  <span id="apiInfo" class="muted"></span>
+</footer>
+
+<!-- 播放器弹层 -->
+<div id="player" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <div class="title-row">
+          <h3 id="pTitle">播放</h3>
+          <!-- 简介按钮：hover/focus 时在下方浮出简介，避免常驻占位导致抖动 -->
+          <button id="pInfoBtn" class="info-btn" aria-describedby="pInfoPop"
+                  title="查看简介" hidden>简介</button>
+          <!-- 收藏按钮：紧跟简介按钮，点击切换收藏状态 -->
+          <button id="pFavBtn" class="info-btn fav-btn" title="收藏这部短剧" hidden>★ 收藏</button>
+        </div>
+      </div>
+      <button id="pClose" class="icon-btn">✕</button>
+    </div>
+    <!-- 简介气泡：默认隐藏，hover「简介」时由 CSS 显示 -->
+    <div id="pInfoPop" class="info-pop" role="tooltip" hidden></div>
+    <!-- 固定比例容器：视频加载前后尺寸保持一致，避免弹层高度跳动 -->
+    <div class="video-box">
+      <video id="video" controls playsinline preload="metadata"></video>
+    </div>
+    <div class="player-foot">
+      <!-- 集数按钮：显示当前集数，点击展开选集卡片（替代原视频上方的横向剧集条） -->
+      <button id="pEpBtn" class="ep-btn" title="点击选择集数" hidden>
+        <span id="pEpLabel">第 1 集</span><span class="ep-caret">▾</span>
+      </button>
+      <p id="pStatus" class="muted"></p>
+      <button id="autoNextBtn" class="auto-next" title="播完自动播放下一集">连播 开</button>
+    </div>
+    <!-- 选集卡片：fixed 定位，按钮下方展开，一行五个集数 -->
+    <div id="pEpCard" class="ep-card" hidden>
+      <div class="ep-card-head">
+        <span id="pEpCount"></span>
+        <button id="pEpClose" class="ep-card-x" title="关闭">✕</button>
+      </div>
+      <div id="pEpGrid" class="ep-grid"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 历史 / 收藏 弹层 -->
+<div id="libModal" class="modal" hidden>
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="libTitle">播放历史</h3>
+      <div class="row-inline">
+        <button id="libClear" class="mini-btn danger" title="清空列表">清空</button>
+        <button id="libClose" class="icon-btn">✕</button>
+      </div>
+    </div>
+    <p id="libHint" class="muted lib-hint"></p>
+    <div id="libList" class="lib-list"></div>
+  </div>
+</div>
+
+<!-- 密钥弹层 -->
+<div id="keyModal" class="modal" hidden>
+  <div class="modal-card narrow">
+    <div class="modal-head">
+      <h3>本地链路密钥</h3>
+      <button id="kClose" class="icon-btn">✕</button>
+    </div>
+    <p class="muted">数据接口需要有效密钥。密钥保存在本机 localStorage，不会随请求发往第三方。</p>
+    <!-- 获取状态：拿不到密钥时说明「在做什么」，避免用户对着空输入框不知所以 -->
+    <p id="keyState" class="key-state" data-state="loading" hidden>
+      <span class="key-spin" aria-hidden="true"></span>
+      <span id="keyStateText">获取中…</span>
+    </p>
+    <div class="row">
+      <input id="keyInput" type="text" placeholder="hg_…" readonly>
+      <button id="keyCopy" class="btn">复制</button>
+    </div>
+    <div class="row">
+      <input id="keyManual" type="text" placeholder="或粘贴已有密钥">
+      <button id="keySave" class="btn primary">保存</button>
+    </div>
+    <div class="row">
+      <button id="keyRetry" class="btn" hidden>重新获取</button>
+    </div>
+    <p id="keyMsg" class="muted"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
