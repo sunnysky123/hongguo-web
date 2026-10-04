@@ -1138,8 +1138,14 @@
     codecChecked = false;
     codecBlocked = false;
   });
+  // 播放器的关闭入口只有右上角的 ✕ 按钮。
+  // 早期版本这里监听了遮罩层点击（e.target === playerEl）转发到 pClose，
+  // 导致点视频、点集数区、点遮罩空白处都会直接关闭播放器，
+  // 正在看进度或操作选集时极易误触，因此刻意去掉，只保留显式关闭按钮。
   playerEl.addEventListener('click', (e) => {
-    if (e.target === playerEl) $('pClose').click();
+    // 遮罩（.modal 背景）上的点击不再关闭播放器，吞掉冒泡避免误触。
+    // 仅当点击落在遮罩本身（而非 .modal-card 内部）时拦截。
+    if (e.target === playerEl) e.stopPropagation();
   });
 
   // ---------- 搜索 ----------
