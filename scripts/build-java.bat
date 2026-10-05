@@ -20,9 +20,6 @@ echo     构建 hongguo-api.jar
 echo   ============================================
 echo.
 
-REM ---------- 探测 JDK 17+ ----------
-REM JAVAC_BIN / JDK_BIN 成对维护：jar.exe 与 javac.exe 同在一个 bin 目录，
-REM 打包用绝对路径调用 jar，避免依赖 PATH（JDK 不在 PATH 时裸 jar 会失败）。
 set "JAVAC_BIN="
 set "JDK_BIN="
 
@@ -33,7 +30,6 @@ if exist "jre\bin\javac.exe" (
   goto :compile
 )
 
-REM 解压多一层的情况（jre\jdk-25.x\bin\javac.exe，Temurin zip 常见）
 for /d %%d in ("jre\*") do (
   if not defined JAVAC_BIN if exist "%%~fd\bin\javac.exe" (
     set "JAVAC_BIN=%%~fd\bin\javac.exe"
@@ -54,7 +50,6 @@ if defined JAVA_HOME (
 
 where javac >nul 2>&1
 if not errorlevel 1 (
-  REM %%~dp$PATH:i 解析 PATH 命中 javac.exe 的完整目录（带尾反斜杠）
   for %%i in (javac.exe) do set "JDK_BIN=%%~dp$PATH:i"
   set "JAVAC_BIN=!JDK_BIN!javac.exe"
   echo   [JDK] 系统 PATH
@@ -78,7 +73,6 @@ if errorlevel 1 (
   echo   [警告] 无法读取 javac 版本（可能版本过旧或已损坏）：!JAVAC_BIN!
 )
 
-REM ---------- 准备构建目录 ----------
 echo   [1/2] 编译源码 ...
 if exist "java\build" rmdir /s /q "java\build"
 mkdir "java\build\classes" 2>nul
@@ -100,8 +94,6 @@ if not exist "java\dist" (
   exit /b 1
 )
 
-REM 源文件列表（逐个追加，避开 for 的空行与 delims 陷阱）。
-REM 重定向写在行首，避免「路径以数字结尾被解析为句柄重定向」的坑。
 if exist "java\build\sources.txt" del "java\build\sources.txt"
 for /r "java\src" %%f in (*.java) do >>"java\build\sources.txt" echo %%f
 
@@ -122,7 +114,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM ---------- 打包 ----------
 echo   [2/2] 打包 JAR ...
 if exist "java\resources" xcopy /e /i /q /y "java\resources" "java\build\classes\" >nul
 
@@ -147,7 +138,6 @@ if errorlevel 1 (
 if exist "!JDK_BIN!jar.exe" (
   "!JDK_BIN!jar.exe" --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
 ) else (
-  REM 绝对路径下没有 jar.exe 时退回裸命令（例如 PATH 命中的是包装脚本）
   jar --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
 )
 set RC=%ERRORLEVEL%

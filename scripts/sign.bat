@@ -5,7 +5,6 @@ title unidbg 签名服务
 
 cd /d "%~dp0..\signer"
 
-REM 端口可通过第一个参数指定，默认 9099
 set SIGN_PORT=9099
 if not "%~1"=="" set SIGN_PORT=%~1
 
@@ -20,7 +19,6 @@ echo         直接双击 scripts\start.bat 会自动拉起签名服务并等待
 echo         本脚本用于单独调试签名链路，或配合 --sign-only 模式使用。
 echo.
 
-REM ---------- 选择 Java：优先项目自带 JRE ----------
 set JAVA_BIN=
 if exist "jre\bin\java.exe" (
   set JAVA_BIN=%CD%\jre\bin\java.exe
@@ -55,7 +53,6 @@ echo   启动中（unidbg 初始化约需 10-30 秒）...
 echo   停止服务：Ctrl-C 或另开窗口运行 scripts\stop.bat
 echo.
 
-REM 版本探测：Java 24+ 需显式开启 native access（unidbg 加载 .so 的方式）
 set JAVA_MAJOR=0
 for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version \"[0-9]"') do (
   set "JAVA_MAJOR=%%~v"

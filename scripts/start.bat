@@ -11,13 +11,7 @@ echo     红果短剧 · 网页版   Windows 启动器
 echo   ==========================================
 echo.
 
-REM ============================================================
-REM  全链路只需 Java，不再需要 Node.js。
-REM  迁移说明：原Node 后端已改写为 Java（java/dist/hongguo-api.jar），
-REM  签名服务本就是 Java，两者现在由同一个启动器编排。
-REM ============================================================
 
-REM ---------- 1. 检查 Java 运行时 ----------
 call :ensure_java
 if errorlevel 1 (
   echo.
@@ -28,7 +22,6 @@ if errorlevel 1 (
 )
 echo   [1/4] Java !JAVAVER!（!JAVA_SRC!）
 
-REM ---------- 2. 检查签名资产 ----------
 if not exist "signer\unidbg-sign.jar" (
   echo   [错误] 缺少 signer\unidbg-sign.jar
   echo          请确认解压时目录结构完整。
@@ -51,7 +44,6 @@ exit /b 1
 
 :after_so
 
-REM ---------- 3. 确保 JAR 已构建 ----------
 if not exist "java\dist\hongguo-api.jar" (
   echo   [3/4] 未找到 API 服务 JAR，正在构建...
   call "%~dp0build-java.bat"
@@ -65,7 +57,6 @@ if not exist "java\dist\hongguo-api.jar" (
   echo   [3/4] API 服务 JAR 就绪
 )
 
-REM ---------- 4. 端口与运行模式 ----------
 set SIGN_PORT=9099
 set API_PORT=8000
 if not "%SIGN_PORT_OVERRIDE%"=="" set SIGN_PORT=%SIGN_PORT_OVERRIDE%
@@ -75,10 +66,6 @@ set MODE=full
 if /i "%~1"=="--no-sign"   set MODE=nosign
 if /i "%~1"=="--sign-only" set MODE=signonly
 
-REM ---------- 5. 服务就绪后自动打开浏览器 ----------
-REM 启动器是前台阻塞进程，没有「就绪」回调，故另起一个后台任务
-REM 轮询 /health（无需密钥的免鉴权端点），就绪后再拉起浏览器。
-REM HG_OPEN_BROWSER=0 可关闭该行为。
 set OPEN_URL=http://127.0.0.1:!API_PORT!/
 if /i "!MODE!"=="signonly" goto :no_browser
 if /i "%HG_OPEN_BROWSER%"=="0" goto :no_browser
@@ -86,7 +73,6 @@ start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 240;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser
 
-REM ---------- 6. 启动 ----------
 echo   [4/4] 正在启动（unidbg 签名服务初始化约需 10-30 秒）...
 echo.
 
@@ -120,16 +106,7 @@ echo   服务已停止。
 pause
 exit /b 0
 
-REM ============================================================
-REM  Java 就绪保障
-REM  用子程序而非 goto，便于 call 返回后继续执行主流程。
-REM ============================================================
 :ensure_java
-REM ---------- 探测优先级：项目自带 JRE > JAVA_HOME > 系统 PATH > 自动安装 ----------
-REM 与 Launcher.findJava() 保持一致：自带 JRE 最优先，避免系统 PATH 上
-REM 的旧 JDK（如 8/11）抢先被选中，导致 unidbg 在旧 JRE 上异常。
-REM 兼容两种放置：jre\bin\java.exe，以及 Temurin zip 解压多一层
-REM （jre\jdk-25.x\bin\java.exe）。
 set "BUNDLED_BIN="
 if exist "jre\bin\java.exe" set "BUNDLED_BIN=%CD%\jre\bin"
 if not defined BUNDLED_BIN for /d %%d in ("jre\*") do (
@@ -154,7 +131,6 @@ if not errorlevel 1 (
   goto :found_java
 )
 
-REM HG_SKIP_JRE_INSTALL=1 时只报错不自动安装（CI / 离线环境用）
 if /i "%HG_SKIP_JRE_INSTALL%"=="1" (
   echo   [错误] 未检测到 Java，且已设置 HG_SKIP_JRE_INSTALL=1 跳过自动安装。
   echo.
@@ -167,8 +143,6 @@ echo   [未检测到] 本机没有 Java 运行时。
 echo.
 echo   即将调用 scripts\install-jre.bat 自动安装 Temurin 25 LTS。
 echo.
-REM 用 call 调用，否则控制流不会返回，后续步骤无法执行。
-REM HG_ASSUME_YES=1 让安装脚本跳过重复的确认询问。
 set "HG_ASSUME_YES=1"
 call "%~dp0install-jre.bat"
 set "HG_ASSUME_YES="
@@ -179,8 +153,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-REM 安装程序不会刷新当前进程的 PATH，
-REM 故手动把 java.exe 所在目录前置进来，否则下面仍然检测不到。
 set "JAVA_DIR="
 if exist "%ProgramFiles%\Eclipse Adoptium\jdk-25\bin\java.exe" set "JAVA_DIR=%ProgramFiles%\Eclipse Adoptium\jdk-25"
 if not defined JAVA_DIR if exist "%ProgramFiles%\Java\jdk-25\bin\java.exe" set "JAVA_DIR=%ProgramFiles%\Java\jdk-25"
@@ -201,15 +173,12 @@ if errorlevel 1 (
 )
 
 :found_java
-REM 读主版本号（java -version 的输出走 stderr）
 set JAVAVER=unknown
 for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version ""[0-9]"') do (
   set "JAVAVER=%%~v"
   set "JAVAVER=!JAVAVER:v=!"
 )
 
-REM 版本闸门：签名服务依赖 JVM 内部 API，低版本会在初始化时才炸，
-REM 这里提前拦下并说清原因，免得用户只看到「签名服务未就绪」。
 set JAVA_MAJOR=0
 for /f "tokens=1 delims=." %%m in ("!JAVAVER!") do set "JAVA_MAJOR=%%m"
 if !JAVA_MAJOR! LSS 17 (

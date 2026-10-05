@@ -16,7 +16,6 @@ echo.
 echo   签名服务需要 Java 17 或更高版本（推荐 25 LTS）。
 echo.
 
-REM ---------- 情况 1：已自带 JRE ----------
 if exist "%JRE_DIR%\bin\java.exe" (
   echo   [完成] 项目已自带 Java 运行时：
   echo          jre\
@@ -28,7 +27,6 @@ if exist "%JRE_DIR%\bin\java.exe" (
   exit /b 0
 )
 
-REM ---------- 情况 2：系统已有 Java ----------
 where java >nul 2>&1
 if not errorlevel 1 (
   echo   [检测到] 系统已安装 Java：
@@ -41,7 +39,6 @@ if not errorlevel 1 (
   exit /b 0
 )
 
-REM ---------- 情况 3：需要下载 ----------
 echo   [未检测到] 本机没有 Java 运行时。
 echo.
 echo   即将从 Adoptium 官方源下载 Temurin JRE 25 LTS（Windows x64，约 56MB）

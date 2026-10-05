@@ -9,10 +9,6 @@ echo.
 echo   正在停止相关进程...
 echo.
 
-REM 用 PowerShell 精确匹配 jar 路径，避免误杀其他 Java 程序。
-REM 迁移后 API 服务与签名服务都是 Java 进程；
-REM 同时兼容旧版 Node 进程（机器上还留着迁移前的服务时也能停掉）。
-REM 注意：PowerShell 自身输出需显式设为 UTF-8，否则中文会乱码。
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='SilentlyContinue';" ^
   "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" ^
@@ -29,7 +25,6 @@ echo.
 echo   [完成] 已停止。
 echo.
 
-REM ---------- 校验端口释放 ----------
 netstat -ano | findstr /r /c:":8000 " /c:":9099 " | findstr "LISTENING" >nul 2>&1
 if errorlevel 1 (
   echo   端口 8000 / 9099 已释放。
