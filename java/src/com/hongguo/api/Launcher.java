@@ -77,6 +77,12 @@ public final class Launcher {
             }
         }
 
+        // 尽早注册关闭钩子：必须在启动签名服务之前，
+        // 否则启动过程中被 Ctrl-C 就会漏掉子进程清理。
+        List<Process> children = new ArrayList<>();
+        AtomicBoolean shuttingDown = new AtomicBoolean(false);
+        registerShutdownHook(children, shuttingDown);
+
         int apiPort = Log.envInt("PORT", 8000);
         String bindHost = Log.env("BIND_HOST", "127.0.0.1");
         String jvmXmx = Log.env("SIGN_JVM_XMX", "512m");
@@ -130,6 +136,8 @@ public final class Launcher {
             signBase = "http://127.0.0.1:" + signPort;
             signStarting.set(true);
             Process proc = startSignService(java.bin, jvmXmx, signPort);
+            // 登记到子进程列表：Ctrl-C 时由关闭钩子统一收编，避免端口残留
+            if (proc != null) children.add(proc);
 
             Log.info("等待签名服务就绪（unidbg 初始化约需 10~30 秒）...");
             boolean ok = waitReady(signBase, readyTimeout, proc, signStarting);
@@ -142,7 +150,7 @@ public final class Launcher {
                     Log.info("签名服务 " + (readyTimeout / 1000) + "s 内未就绪");
                     Log.info("  排查：1) Java 版本 >= 17  2) capture/fq_oversea 下三个文件是否齐全");
                 }
-                shutdown(new ArrayList<>());
+                shutdown(children);
                 System.exit(1);
             }
             Log.info("签名服务就绪 " + signBase);
@@ -157,6 +165,10 @@ public final class Launcher {
         if (signOnly) {
             Log.info("签名服务独立运行中：" + signBase);
             Log.info("  按 Ctrl-C 停止");
+            // 必须阻塞：否则 main 返回后只剩非 daemon 线程撑着 JVM，
+            // 关闭钩子不会触发，签名子进程也不会被收编。
+            awaitShutdown(shuttingDown);
+            shutdown(children);
             return;
         }
 
@@ -175,6 +187,52 @@ public final class Launcher {
         // 不再重复打印服务信息：Server.start() 已输出地址、签名后端与上游 host，
         // 这里只补一行停止提示，避免同一批信息在控制台出现两遍。
         Log.info("按 Ctrl-C 停止");
+
+        // 同上：阻塞等待 Ctrl-C，由关闭钩子负责清理签名子进程。
+        // 没有这一步，main 返回后 JVM 不会退出，钩子也就不会跑。
+        awaitShutdown(shuttingDown);
+        shutdown(children);
+    }
+
+    /**
+     * 注册 JVM 关闭钩子：Ctrl-C / SIGTERM 时收编所有子进程。
+     *
+     * 为什么必须注册：签名服务是本进程 fork 出来的子进程，
+     * 父进程退出时不会自动带走它——它会被 init 收养并继续持有 9099 端口，
+     * 表现为「Ctrl-C 后端口仍被占用、下次启动报端口被占用」。
+     *
+     * 注意注册时机必须早于任何 Process 的创建。
+     */
+    private static void registerShutdownHook(List<Process> children, AtomicBoolean shuttingDown) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            // 幂等：SIGINT 与 SIGTERM 可能同时到达，避免重复收编
+            if (!shuttingDown.compareAndSet(false, true)) return;
+            shutdown(children);
+        }, "hg-shutdown"));
+    }
+
+    /**
+     * 阻塞主线程直到关闭钩子开始执行。
+     *
+     * HttpServer 的工作线程与转发子进程输出的线程都是非 daemon，
+     * main 返回后 JVM 不会自然退出；这里用锁等待把控制权交给关闭钩子，
+     * 保证 Ctrl-C 之后一定能走到子进程清理。
+     */
+    private static void awaitShutdown(AtomicBoolean shuttingDown) {
+        Log.info("");
+        Log.info("服务运行中，按 Ctrl-C 停止并清理签名服务...");
+        final java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        // 关闭钩子开始执行时唤醒主线程，让它去完成子进程收编
+        Runtime.getRuntime().addShutdownHook(new Thread(latch::countDown, "hg-shutdown-wait"));
+        try {
+            // 等钩子置位或用户直接关窗（最长等 1 小时兜底）
+            while (!shuttingDown.get()) {
+                if (latch.await(1, java.util.concurrent.TimeUnit.SECONDS)) break;
+                if (shuttingDown.get()) break;
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     /**
@@ -478,11 +536,63 @@ public final class Launcher {
         return bos.toByteArray();
     }
 
-    /** 停止子进程并汇总被抑制的告警数。 */
+    /**
+     * 停止子进程并汇总被抑制的告警数。
+     *
+     * 三段式收编，保证端口一定释放：
+     *   1. destroy()  发送 SIGTERM，让子进程走正常的 JVM 退出流程；
+     *   2. 限时等待   避免子进程卡死不拖住主进程退出；
+     *   3. destroyForcibly() 仍在世就 SIGKILL 强杀。
+     *
+     * 只调 destroy() 是不够的：若子进程内部卡住（如 unidbg 正在签名），
+     * SIGTERM 可能被忽略，端口会一直留着。
+     */
     static void shutdown(List<Process> children) {
         for (Process c : children) {
-            if (c != null && c.isAlive()) c.destroy();
+            if (c == null) continue;
+            // 先收编子孙：unidbg 可能再 fork 出孙进程，
+            // 只杀直接子进程会留下持有端口的孤儿。
+            c.descendants().forEach(d -> {
+                if (d.isAlive()) {
+                    d.destroy();
+                    try {
+                        // onExit().get() 返回 Process 对象，非 boolean：
+                        // 用返回值是否为 null 判断是否等到退出结果
+                        if (d.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS) == null) {
+                            d.destroyForcibly();
+                        }
+                    } catch (java.util.concurrent.TimeoutException te) {
+                        // 超时仍在世：强杀
+                        d.destroyForcibly();
+                    } catch (Exception ignored) {
+                        try {
+                            d.destroyForcibly();
+                        } catch (Exception ignored2) {
+                            // 已退出
+                        }
+                    }
+                }
+            });
+
+            if (!c.isAlive()) continue;
+            c.destroy();
+            boolean exited = false;
+            try {
+                exited = c.onExit().get(3, java.util.concurrent.TimeUnit.SECONDS) != null;
+            } catch (Exception ignored) {
+                // 超时或中断：走强杀分支
+            }
+            if (!exited && c.isAlive()) {
+                try {
+                    c.destroyForcibly();
+                    // 再给一点时间让内核回收 socket
+                    c.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // 已经退出
+                }
+            }
         }
+
         int n = METASEC_COUNT.get();
         if (n > 0) {
             Log.info("");
