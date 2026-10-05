@@ -19,6 +19,15 @@ if exist "signer\jre\bin\javac.exe" (
   goto :compile
 )
 
+REM 解压多一层的情况（signer\jre\jdk-25.x\bin\javac.exe，Temurin zip 常见）
+for /d %%d in ("signer\jre\*") do (
+  if not defined JAVAC_BIN if exist "%%~fd\bin\javac.exe" (
+    set "JAVAC_BIN=%%~fd\bin\javac.exe"
+    echo   [JDK] 项目自带 JRE（解压多一层）
+    goto :compile
+  )
+)
+
 if defined JAVA_HOME (
   if exist "%JAVA_HOME%\bin\javac.exe" (
     set JAVAC_BIN=%JAVA_HOME%\bin\javac.exe

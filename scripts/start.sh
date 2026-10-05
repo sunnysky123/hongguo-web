@@ -18,8 +18,13 @@ echo "  =========================================="
 # ---------- 探测 Java ----------
 find_java() {
   local exe="java"
-  [ -x "signer/jre/bin/java" ] && { echo "signer/jre/bin/java"; return; }
-  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ] && { echo "$JAVA_HOME/bin/java"; return; }
+  # 项目自带 JRE：直接一层，或解压多一层（signer/jre/<目录名>/bin，Temurin zip 常见）
+  if [ -x "signer/jre/bin/$exe" ]; then echo "signer/jre/bin/$exe"; return; fi
+  local d
+  for d in signer/jre/*/; do
+    if [ -x "${d}bin/$exe" ]; then echo "${d}bin/$exe"; return; fi
+  done
+  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/$exe" ] && { echo "$JAVA_HOME/bin/$exe"; return; }
   command -v java 2>/dev/null && return
   echo ""
 }

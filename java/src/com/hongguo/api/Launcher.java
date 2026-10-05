@@ -394,8 +394,8 @@ public final class Launcher {
     static JavaBin findJava() {
         String exe = isWindows() ? "java.exe" : "java";
 
-        Path bundled = BUNDLED_JRE.resolve("bin").resolve(exe);
-        if (Files.isExecutable(bundled)) {
+        Path bundled = bundledJavaBin(exe);
+        if (bundled != null) {
             return new JavaBin(bundled.toString(), "项目自带 JRE", javaMajor(bundled.toString()));
         }
 
@@ -413,6 +413,25 @@ public final class Launcher {
             }
         }
         return null;
+    }
+
+    /**
+     * 项目自带 JRE 的 java 可执行文件。
+     * 兼容两种放置：signer/jre/bin/java.exe，以及解压多了一层的
+     * signer/jre/&lt;目录名&gt;/bin/java.exe（Temurin zip 常见）。
+     */
+    private static Path bundledJavaBin(String exe) {
+        Path direct = BUNDLED_JRE.resolve("bin").resolve(exe);
+        if (Files.isExecutable(direct)) return direct;
+        if (!Files.isDirectory(BUNDLED_JRE)) return null;
+        try (java.util.stream.Stream<Path> sub = Files.list(BUNDLED_JRE)) {
+            return sub.filter(Files::isDirectory)
+                    .map(d -> d.resolve("bin").resolve(exe))
+                    .filter(Files::isExecutable)
+                    .findFirst().orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
     }
 
     private static List<String> pathDirs() {

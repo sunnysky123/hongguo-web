@@ -19,8 +19,8 @@ echo ""
 
 # ---------- 探测 JDK 17+ ----------
 if ! command -v javac >/dev/null 2>&1; then
-  # 优先用项目自带的 JRE
-  for cand in "$ROOT/signer/jre/bin/javac" /usr/lib/jvm/*/bin/javac; do
+  # 优先用项目自带的 JRE（含解压多一层：signer/jre/<目录名>/bin/javac）
+  for cand in "$ROOT/signer/jre/bin/javac" "$ROOT/signer/jre"/*/bin/javac /usr/lib/jvm/*/bin/javac; do
     if [ -x "$cand" ]; then JAVAC="$cand"; break; fi
   done
 else
