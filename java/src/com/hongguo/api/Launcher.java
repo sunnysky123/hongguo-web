@@ -552,44 +552,56 @@ public final class Launcher {
             if (c == null) continue;
             // 先收编子孙：unidbg 可能再 fork 出孙进程，
             // 只杀直接子进程会留下持有端口的孤儿。
-            c.descendants().forEach(d -> {
-                if (d.isAlive()) {
+            //
+            // descendants() 在个别平台/权限下可能抛异常，而这里跑在关闭钩子里，
+            // 一旦抛出就会中断整个循环，后面的子进程一个都收编不到 ——
+            // 那正好复现「端口残留」这个 bug 本身。所以必须隔离。
+            java.util.List<java.lang.ProcessHandle> descendants;
+            try {
+                descendants = c.descendants().collect(java.util.stream.Collectors.toList());
+            } catch (Throwable t) {
+                descendants = java.util.Collections.emptyList();
+            }
+            for (java.lang.ProcessHandle d : descendants) {
+                if (!d.isAlive()) continue;
+                try {
+                    // SIGTERM 让子进程走正常的 JVM 退出流程
                     d.destroy();
-                    try {
-                        // onExit().get() 返回 Process 对象，非 boolean：
-                        // 用返回值是否为 null 判断是否等到退出结果
-                        if (d.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS) == null) {
-                            d.destroyForcibly();
-                        }
-                    } catch (java.util.concurrent.TimeoutException te) {
-                        // 超时仍在世：强杀
+                    // onExit().get() 返回 Process 对象，非 boolean：
+                    // 用返回值是否为 null 判断是否等到退出结果
+                    if (d.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS) == null) {
                         d.destroyForcibly();
-                    } catch (Exception ignored) {
-                        try {
-                            d.destroyForcibly();
-                        } catch (Exception ignored2) {
-                            // 已退出
-                        }
+                    }
+                } catch (java.util.concurrent.TimeoutException te) {
+                    // 超时仍在世：强杀
+                    if (d.isAlive()) d.destroyForcibly();
+                } catch (Exception ignored) {
+                    // 已退出，或平台不支持对应操作
+                    try {
+                        if (d.isAlive()) d.destroyForcibly();
+                    } catch (Exception ignored2) {
+                        // 已退出
                     }
                 }
-            });
+            }
 
             if (!c.isAlive()) continue;
-            c.destroy();
-            boolean exited = false;
             try {
-                exited = c.onExit().get(3, java.util.concurrent.TimeUnit.SECONDS) != null;
-            } catch (Exception ignored) {
-                // 超时或中断：走强杀分支
-            }
-            if (!exited && c.isAlive()) {
+                c.destroy();
+                boolean exited = false;
                 try {
+                    exited = c.onExit().get(3, java.util.concurrent.TimeUnit.SECONDS) != null;
+                } catch (Exception ignored) {
+                    // 超时或中断：走强杀分支
+                }
+                if (!exited && c.isAlive()) {
                     c.destroyForcibly();
                     // 再给一点时间让内核回收 socket
                     c.onExit().get(2, java.util.concurrent.TimeUnit.SECONDS);
-                } catch (Exception ignored) {
-                    // 已经退出
                 }
+            } catch (Throwable t) {
+                // 兜底：无论如何都不能让子进程活下来占着端口
+                try { c.destroyForcibly(); } catch (Throwable ignored2) { }
             }
         }
 
