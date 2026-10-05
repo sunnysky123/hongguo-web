@@ -182,9 +182,16 @@ public final class Launcher {
         Log.info("");
     }
 
+    /**
+     * 启动横幅。只打印纯ASCII 的系统信息。
+     *
+     * 这里刻意不输出中文标题：控制台代码页与 JVM 编码一旦不一致，
+     * 中文会变成「红红果果」式的重复乱码，而纯 ASCII 在任何代码页下
+     * 都正常。需要中文标识时可看浏览器标题栏或日志文件。
+     */
     private static void banner() {
         Log.info("");
-        Log.info("  红果短剧 · 网页版启动器（Java 版）");
+        Log.info("  Hongguo Short Drama - Web Launcher (Java Edition)");
         Log.info("  " + System.getProperty("os.name") + " "
                 + System.getProperty("os.arch") + "  Java "
                 + System.getProperty("java.version"));
