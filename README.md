@@ -71,7 +71,7 @@ JAR 不存在时先构建：`bash scripts/build-java.sh`（或 Windows 下双击
 
 | 组件 | 版本 | 是否必需 |
 |---|---|---|
-| Java | **>= 17**（自带 `signer/jre` Temurin 25 LTS，推荐 25） | 必需 |
+| Java | **>= 17**（自带 `jre` Temurin 25 LTS，推荐 25） | 必需 |
 | ffmpeg | 任意近期版本 | 可选，剥离 CENC 信令让浏览器可直接播 |
 
 **全链路（API 服务 + 签名服务）都跑在 Java 上，不再需要 Node.js。**
@@ -141,8 +141,8 @@ hongguo-web/
 │   ├── dist/hongguo-api.jar      构建产物（不入库，start.bat 会自动构建）
 │   └── build/                    编译中间产物
 ├── signer/
-│   ├── unidbg-sign.jar           unidbg 签名服务（跨平台 fat JAR，未改动）
-│   └── jre/                      自带 Windows JRE 25 LTS
+│   └── unidbg-sign.jar           unidbg 签名服务（跨平台 fat JAR，未改动）
+├── jre/                          自带 Windows JRE 25 LTS（仓库根目录，独立于 signer）
 ├── capture/fq_oversea/           签名算法依赖的 so（路径不可改）
 ├── server/
 │   ├── config/content-config.json  上游配置与 base_query

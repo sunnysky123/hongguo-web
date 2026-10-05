@@ -49,7 +49,8 @@ public final class Launcher {
 
     private static final Path SIGN_DIR = Paths.get("signer");
     private static final Path JAR = SIGN_DIR.resolve("unidbg-sign.jar");
-    private static final Path BUNDLED_JRE = SIGN_DIR.resolve("jre");
+    /** 自带 JRE 位于仓库根目录（与 signer/ 平级，避免改动 signer 目录时被误删）。 */
+    private static final Path BUNDLED_JRE = Paths.get("jre");
     private static final Path CAPTURE = Paths.get("capture", "fq_oversea");
     private static final String[] REQUIRED_SO = {
             "libmetasec_ml.so", "libc++_shared.so", "ms_16777218.bin"};
@@ -103,7 +104,7 @@ public final class Launcher {
             JavaBin java = findJava();
             if (java == null) {
                 Log.info("未找到 Java 运行时。");
-                Log.info("  Windows：把 JRE 放到 signer/jre/，或安装 Temurin 25+ 并加入 PATH");
+                Log.info("  Windows：把 JRE 放到 jre/，或安装 Temurin 25+ 并加入 PATH");
                 Log.info("  也可运行 scripts\\install-jre.bat 自动下载安装。");
                 System.exit(1);
             }
@@ -116,7 +117,7 @@ public final class Launcher {
                 if (java.major < JAVA_MIN_MAJOR) {
                     Log.info("Java 版本过低：" + java.major + " < " + JAVA_MIN_MAJOR);
                     Log.info("  签名服务需要 Java 17 或更高版本（推荐 25 LTS）。");
-                    Log.info("  处理：把 Temurin JRE 25 解压到 signer/jre/ 覆盖旧目录，");
+                    Log.info("  处理：把 Temurin JRE 25 解压到 jre/ 覆盖旧目录，");
                     Log.info("        或安装 Temurin 25 后清空 JAVA_HOME 再重试。");
                     System.exit(1);
                 }
@@ -417,8 +418,8 @@ public final class Launcher {
 
     /**
      * 项目自带 JRE 的 java 可执行文件。
-     * 兼容两种放置：signer/jre/bin/java.exe，以及解压多了一层的
-     * signer/jre/&lt;目录名&gt;/bin/java.exe（Temurin zip 常见）。
+     * 兼容两种放置：jre/bin/java.exe，以及解压多了一层的
+     * jre/&lt;目录名&gt;/bin/java.exe（Temurin zip 常见）。
      */
     private static Path bundledJavaBin(String exe) {
         Path direct = BUNDLED_JRE.resolve("bin").resolve(exe);

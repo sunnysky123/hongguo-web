@@ -33,7 +33,7 @@ if errorlevel 1 (
   echo   [错误] 未找到 Java 运行时
   echo.
   echo   请任选一种方式：
-  echo     1) 把 Windows 版 JRE 解压到项目的 signer\jre\ 目录
+  echo     1) 把 Windows 版 JRE 解压到项目的 jre\ 目录
   echo     2) 安装 Temurin 25+ 并加入 PATH：https://adoptium.net/
   echo.
   echo   也可直接双击 scripts\install-jre.bat 自动下载安装。
@@ -64,7 +64,7 @@ for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version \"[0-9]"'
 if !JAVA_MAJOR! LSS 17 (
   echo   [错误] Java 版本过低：!JAVA_MAJOR!
   echo          签名服务需要 Java 17 或更高版本，推荐 Temurin 25 LTS。
-  echo          请把 JRE 25 解压到 signer\jre\ 覆盖旧目录后重试。
+  echo          请把 JRE 25 解压到 jre\ 覆盖旧目录后重试。
   pause
   exit /b 1
 )

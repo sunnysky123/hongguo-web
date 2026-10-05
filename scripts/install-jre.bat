@@ -5,7 +5,7 @@ title 安装 Java 运行时（签名服务依赖）
 
 cd /d "%~dp0.."
 
-set JRE_DIR=%CD%\signer\jre
+set JRE_DIR=%CD%\jre
 set URL_TEMURIN=https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse
 
 echo.
@@ -19,7 +19,7 @@ echo.
 REM ---------- 情况 1：已自带 JRE ----------
 if exist "%JRE_DIR%\bin\java.exe" (
   echo   [完成] 项目已自带 Java 运行时：
-  echo          signer\jre\
+  echo          jre\
   for /f "tokens=3 delims==" %%v in ('findstr "JAVA_VERSION=" "%JRE_DIR%\release"') do echo          版本 %%v
   echo.
   echo   无需安装，可直接运行 scripts\start.bat
@@ -72,13 +72,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "  Remove-Item \"$env:TEMP\temurin-extract\" -Recurse -Force;" ^
   "  Remove-Item \"$env:TEMP\temurin25-jre.zip\" -Force;" ^
   "  if (Test-Path '%JRE_DIR%\bin\java.exe') {" ^
-  "    Write-Host '   [完成] Java 运行时已安装到 signer\jre\' -ForegroundColor Green" ^
+  "    Write-Host '   [完成] Java 运行时已安装到 jre\' -ForegroundColor Green" ^
   "  } else { Write-Host '   [错误] 解压后未找到 java.exe' -ForegroundColor Red; exit 1 }" ^
   "} catch { Write-Host ('   [错误] ' + $_.Exception.Message) -ForegroundColor Red; exit 1 }"
 
 echo.
 if errorlevel 1 (
-  echo   安装失败。可手动下载后解压到 signer\jre\：
+  echo   安装失败。可手动下载后解压到 jre\：
   echo     https://adoptium.net/temurin/releases/?version=25
   echo.
   pause

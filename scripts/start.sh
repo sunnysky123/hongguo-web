@@ -18,10 +18,10 @@ echo "  =========================================="
 # ---------- 探测 Java ----------
 find_java() {
   local exe="java"
-  # 项目自带 JRE：直接一层，或解压多一层（signer/jre/<目录名>/bin，Temurin zip 常见）
-  if [ -x "signer/jre/bin/$exe" ]; then echo "signer/jre/bin/$exe"; return; fi
+  # 项目自带 JRE：直接一层，或解压多一层（jre/<目录名>/bin，Temurin zip 常见）
+  if [ -x "jre/bin/$exe" ]; then echo "jre/bin/$exe"; return; fi
   local d
-  for d in signer/jre/*/; do
+  for d in jre/*/; do
     if [ -x "${d}bin/$exe" ]; then echo "${d}bin/$exe"; return; fi
   done
   [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/$exe" ] && { echo "$JAVA_HOME/bin/$exe"; return; }
@@ -33,7 +33,7 @@ JAVA_BIN="$(find_java)"
 if [ -z "$JAVA_BIN" ]; then
   echo "  [错误] 未找到 Java 运行时"
   echo "         Linux/macOS：安装 Temurin 17+：https://adoptium.net/"
-  echo "         或把 JRE 放到 signer/jre/ 目录下"
+  echo "         或把 JRE 放到 jre/ 目录下"
   exit 1
 fi
 

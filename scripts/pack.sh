@@ -46,7 +46,7 @@ tar -C "$SRC" -cf - \
   --exclude='./java/build' \
   --exclude='./java/dist' \
   --exclude='./.git' \
-  --exclude='./signer/jre' \
+  --exclude='./jre' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
   --exclude='__pycache__' \
@@ -59,10 +59,10 @@ if [ "$ONLY_SIGN" = 1 ]; then
 fi
 
 # 按需带上 Windows JRE
-if [ "$WITH_JRE" = 1 ] && [ -d "$SRC/signer/jre" ]; then
+if [ "$WITH_JRE" = 1 ] && [ -d "$SRC/jre" ]; then
   echo "  正在复制 Windows JRE（126MB，耗时稍久）..."
   mkdir -p "$STAGE/$NAME/signer"
-  cp -r "$SRC/signer/jre" "$STAGE/$NAME/signer/jre"
+  cp -r "$SRC/jre" "$STAGE/$NAME/jre"
 else
   mkdir -p "$STAGE/$NAME/signer"
   cat > "$STAGE/$NAME/signer/需要JRE.txt" <<'EOF'
@@ -72,7 +72,7 @@ else
 请任选一种方式：
   1) 双击 scripts\install-jre.bat 自动下载 Temurin JRE 25 到本目录
   2) 手动下载 https://adoptium.net/temurin/releases/?version=17
-     解压后把 jre 文件夹放到本目录（signer\jre\）
+     解压后把 jre 文件夹放到本目录（jre\）
   3) 系统已装 Java 17+（推荐 25 LTS）亦可直接使用
 EOF
   [ "$ONLY_SIGN" = 1 ] && rm -f "$STAGE/$NAME/signer/需要JRE.txt"
@@ -128,8 +128,8 @@ if [ "$ONLY_SIGN" != 1 ]; then
   done
 fi
 if [ "$WITH_JRE" = 1 ]; then
-  for f in signer/jre/bin/java.exe signer/jre/bin/server/jvm.dll \
-           signer/jre/lib/modules signer/jre/release; do
+  for f in jre/bin/java.exe jre/bin/server/jvm.dll \
+           jre/lib/modules jre/release; do
     check "$f"
   done
 else

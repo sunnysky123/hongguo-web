@@ -13,14 +13,14 @@ echo.
 
 REM ---------- 探测 JDK 17+ ----------
 set JAVAC_BIN=
-if exist "signer\jre\bin\javac.exe" (
-  set JAVAC_BIN=%CD%\signer\jre\bin\javac.exe
+if exist "jre\bin\javac.exe" (
+  set JAVAC_BIN=%CD%\jre\bin\javac.exe
   echo   [JDK] 项目自带 JRE
   goto :compile
 )
 
-REM 解压多一层的情况（signer\jre\jdk-25.x\bin\javac.exe，Temurin zip 常见）
-for /d %%d in ("signer\jre\*") do (
+REM 解压多一层的情况（jre\jdk-25.x\bin\javac.exe，Temurin zip 常见）
+for /d %%d in ("jre\*") do (
   if not defined JAVAC_BIN if exist "%%~fd\bin\javac.exe" (
     set "JAVAC_BIN=%%~fd\bin\javac.exe"
     echo   [JDK] 项目自带 JRE（解压多一层）

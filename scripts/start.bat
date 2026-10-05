@@ -128,11 +128,11 @@ REM ============================================================
 REM ---------- 探测优先级：项目自带 JRE > JAVA_HOME > 系统 PATH > 自动安装 ----------
 REM 与 Launcher.findJava() 保持一致：自带 JRE 最优先，避免系统 PATH 上
 REM 的旧 JDK（如 8/11）抢先被选中，导致 unidbg 在旧 JRE 上异常。
-REM 兼容两种放置：signer\jre\bin\java.exe，以及 Temurin zip 解压多一层
-REM （signer\jre\jdk-25.x\bin\java.exe）。
+REM 兼容两种放置：jre\bin\java.exe，以及 Temurin zip 解压多一层
+REM （jre\jdk-25.x\bin\java.exe）。
 set "BUNDLED_BIN="
-if exist "signer\jre\bin\java.exe" set "BUNDLED_BIN=%CD%\signer\jre\bin"
-if not defined BUNDLED_BIN for /d %%d in ("signer\jre\*") do (
+if exist "jre\bin\java.exe" set "BUNDLED_BIN=%CD%\jre\bin"
+if not defined BUNDLED_BIN for /d %%d in ("jre\*") do (
   if not defined BUNDLED_BIN if exist "%%~fd\bin\java.exe" set "BUNDLED_BIN=%%~fd\bin"
 )
 if defined BUNDLED_BIN (
@@ -159,7 +159,7 @@ if /i "%HG_SKIP_JRE_INSTALL%"=="1" (
   echo   [错误] 未检测到 Java，且已设置 HG_SKIP_JRE_INSTALL=1 跳过自动安装。
   echo.
   echo   请手动安装 Temurin 17 或更高版本：https://adoptium.net/
-  echo   或把 JRE 解压到 signer\jre\（要求 bin\java.exe 存在）。
+  echo   或把 JRE 解压到 jre\（要求 bin\java.exe 存在）。
   exit /b 1
 )
 
@@ -175,7 +175,7 @@ set "HG_ASSUME_YES="
 if errorlevel 1 (
   echo.
   echo   [错误] Java 安装未完成。
-  echo          也可以手动把 JRE 解压到 signer\jre\（要求 bin\java.exe 存在）。
+  echo          也可以手动把 JRE 解压到 jre\（要求 bin\java.exe 存在）。
   exit /b 1
 )
 
@@ -216,12 +216,12 @@ if !JAVA_MAJOR! LSS 17 (
   echo   [错误] Java 版本过低或无法识别：!JAVAVER!（来源：!JAVA_SRC!）
   echo          需要 Java 17 或更高版本，推荐 Temurin 25 LTS。
   if defined JAVA_FROM_BUNDLED (
-    echo          处理：signer\jre 里的 JRE 版本过低或已损坏，
-    echo                删除 signer\jre 后重跑 scripts\install-jre.bat，
-    echo                或把 Temurin 25 JRE 解压到 signer\jre\ 覆盖（bin\java.exe 必须存在）。
+    echo          处理：jre 里的 JRE 版本过低或已损坏，
+    echo                删除 jre 后重跑 scripts\install-jre.bat，
+    echo                或把 Temurin 25 JRE 解压到 jre\ 覆盖（bin\java.exe 必须存在）。
   ) else (
     echo          处理：重新运行 scripts\install-jre.bat 覆盖安装，
-    echo                或把 Temurin 25 JRE 解压到 signer\jre\（bin\java.exe 必须存在）。
+    echo                或把 Temurin 25 JRE 解压到 jre\（bin\java.exe 必须存在）。
   )
   echo.
   pause
