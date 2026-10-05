@@ -1,0 +1,13 @@
+# 行尾规范：Windows 批处理必须 CRLF（cmd 解析 LF-only 批处理会崩坏），
+# shell 脚本必须 LF（bash 遇 CRLF 报 '\r' command not found）
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+*.sh    text eol=lf
+
+# Java / 配置 / 文档：入库统一 LF，检出按平台
+*.java  text eol=lf
+*.json  text
+*.md    text
+.gitattributes text
+.gitignore text
