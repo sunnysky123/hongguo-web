@@ -23,17 +23,73 @@ public final class Safeguards {
 
     // ==================== 缓存 ====================
 
-    private static final Map<String, Entry> MEM = new ConcurrentHashMap<>();
+    /**
+     * 内存缓存。
+     *
+     * 历史问题（内存持续增长的元凶）：只按条数判断是否清理（>20000），
+     * 且**没有任何后台清扫** —— 过期条目只有在恰好被 cacheGet 命中时才会移除。
+     * 意味着 6 小时 TTL 的 episodes/vmtracks 缓存实际永不回收，只增不减。
+     *
+     * 现在改为：访问序 LinkedHashMap（LRU）+ 条数与字节双上限 + 定时清扫过期条目。
+     */
+    private static final Map<String, Entry> MEM = java.util.Collections.synchronizedMap(
+            new LinkedHashMap<String, Entry>(256, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
+                    return MEM_TOTAL.get() > MAX_ENTRIES || MEM_BYTES.get() > MAX_BYTES;
+                }
+            });
+
+    /** 当前缓存总字节（近似值）。 */
+    private static final java.util.concurrent.atomic.AtomicLong MEM_BYTES =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 当前缓存条数（近似值，LinkedHashMap.size() 需加锁，故单独维护）。 */
+    private static final java.util.concurrent.atomic.AtomicInteger MEM_TOTAL =
+            new java.util.concurrent.atomic.AtomicInteger();
+
+    /** 条数上限：HG_MEM_CACHE_MAX，默认 4096。 */
+    private static final int MAX_ENTRIES = Log.envInt("HG_MEM_CACHE_MAX", 4096);
+
+    /** 字节上限：HG_MEM_CACHE_MAX_MB，默认 128MB。 */
+    private static final long MAX_BYTES =
+            (long) Log.envInt("HG_MEM_CACHE_MAX_MB", 128) * 1024L * 1024L;
+
+    /** 清扫周期：HG_SWEEP_INTERVAL_MS，默认 60s。 */
+    private static final long SWEEP_INTERVAL_MS =
+            Log.envInt("HG_SWEEP_INTERVAL_MS", 60) * 1000L;
+
+    static {
+        // 后台清扫过期条目：这是让 TTL 真正生效的关键。
+        // 单个 daemon 线程，不阻止 JVM 退出。
+        Thread t = new Thread(() -> {
+            while (true) {
+                try {
+                    Thread.sleep(SWEEP_INTERVAL_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                try {
+                    sweep();
+                } catch (Throwable ignored) {
+                    // 清扫失败不应影响服务
+                }
+            }
+        }, "hg-cache-sweeper");
+        t.setDaemon(true);
+        t.start();
+    }
 
     private static final class Entry {
         final Object val;
         final long expire;   // 0 = 永不过期
-        long slide;
+        final int weight;    // 近似字节数，用于字节上限淘汰
 
-        Entry(Object val, long expire, long slide) {
+        Entry(Object val, long expire, int weight) {
             this.val = val;
             this.expire = expire;
-            this.slide = slide;
+            this.weight = weight;
         }
     }
 
@@ -60,10 +116,14 @@ public final class Safeguards {
     }
 
     public static Object cacheGet(String key) {
-        Entry hit = MEM.get(key);
+        Entry hit;
+        // LinkedHashMap 访问序：get 也会结构性修改，故必须加锁
+        synchronized (MEM) {
+            hit = MEM.get(key);
+        }
         if (hit == null) return null;
         if (hit.expire != 0 && hit.expire < System.currentTimeMillis()) {
-            MEM.remove(key);
+            removeEntry(key, hit);
             return null;
         }
         return hit.val;
@@ -72,17 +132,101 @@ public final class Safeguards {
     /** 缓存写入。ttl 单位为秒，<=0 表示不缓存。 */
     public static void cacheSet(String key, Object val, long ttlSec) {
         if (ttlSec <= 0) return;
-        if (MEM.size() > 20000) {
-            // 简易 LRU 近似：清掉最早过期的一批
-            List<Map.Entry<String, Entry>> sorted =
-                    new ArrayList<>(MEM.entrySet());
-            sorted.sort((a, b) -> Long.compare(a.getValue().expire, b.getValue().expire));
-            for (int i = 0; i < Math.min(2000, sorted.size()); i++) {
-                MEM.remove(sorted.get(i).getKey());
+        long expire = ttlSec > 0 ? System.currentTimeMillis() + ttlSec * 1000L : 0;
+        Entry e = new Entry(val, expire, weigh(val));
+        Entry old;
+        synchronized (MEM) {
+            old = MEM.put(key, e);
+        }
+        if (old != null) {
+            MEM_BYTES.addAndGet(-old.weight);
+            MEM_TOTAL.decrementAndGet();
+        }
+        MEM_BYTES.addAndGet(e.weight);
+        MEM_TOTAL.incrementAndGet();
+        // 超过硬上限时主动裁剪，避免依赖 removeEldestEntry 的边界行为
+        trim();
+    }
+
+    private static void removeEntry(String key, Entry e) {
+        synchronized (MEM) {
+            Entry cur = MEM.remove(key);
+            if (cur != null) {
+                MEM_BYTES.addAndGet(-cur.weight);
+                MEM_TOTAL.decrementAndGet();
             }
         }
-        long expire = ttlSec > 0 ? System.currentTimeMillis() + ttlSec * 1000L : 0;
-        MEM.put(key, new Entry(val, expire, 0));
+    }
+
+    /** 清扫所有过期条目。 */
+    static void sweep() {
+        long now = System.currentTimeMillis();
+        synchronized (MEM) {
+            java.util.Iterator<Map.Entry<String, Entry>> it = MEM.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Entry> en = it.next();
+                if (en.getValue().expire != 0 && en.getValue().expire < now) {
+                    MEM_BYTES.addAndGet(-en.getValue().weight);
+                    MEM_TOTAL.decrementAndGet();
+                    it.remove();
+                }
+            }
+        }
+    }
+
+    /** 裁剪到上限内（按 LRU 顺序从头淘汰）。 */
+    private static void trim() {
+        synchronized (MEM) {
+            java.util.Iterator<Map.Entry<String, Entry>> it = MEM.entrySet().iterator();
+            while (it.hasNext()
+                    && (MEM_TOTAL.get() > MAX_ENTRIES || MEM_BYTES.get() > MAX_BYTES)) {
+                Map.Entry<String, Entry> en = it.next();
+                MEM_BYTES.addAndGet(-en.getValue().weight);
+                MEM_TOTAL.decrementAndGet();
+                it.remove();
+            }
+        }
+    }
+
+    /**
+     * 估算缓存值的近似字节数。
+     *
+     * 只做量级估算即可（目的是别让单个大value 撑爆堆，不是精确计量）：
+     * 字符串按 UTF-16 估2 字节/字符 + 对象头，集合按元素个数摊。
+     * 带深度上限，防止自引用结构导致栈溢出。
+     */
+    public static int weigh(Object v) {
+        if (v == null) return 0;
+        try {
+            return weigh(v, 0);
+        } catch (Throwable t) {
+            return 256;
+        }
+    }
+
+    private static int weigh(Object v, int depth) {
+        if (v == null) return 4;
+        if (depth > 4) return 64;
+        if (v instanceof String) return 40 + ((String) v).length() * 2;
+        if (v instanceof byte[]) return 16 + ((byte[]) v).length;
+        if (v instanceof Number || v instanceof Boolean) return 16;
+        if (v instanceof Map) {
+            int sum = 48;
+            for (Map.Entry<?, ?> e : ((Map<?, ?>) v).entrySet()) {
+                sum += 48 + weigh(e.getKey(), depth + 1) + weigh(e.getValue(), depth + 1);
+                if (sum > 1 << 20) return sum;  // 单个 value 超 1MB 时不再细算
+            }
+            return sum;
+        }
+        if (v instanceof List) {
+            int sum = 48;
+            for (Object o : (List<?>) v) {
+                sum += 16 + weigh(o, depth + 1);
+                if (sum > 1 << 20) return sum;
+            }
+            return sum;
+        }
+        return 64;
     }
 
     // ==================== 睡眠 ====================

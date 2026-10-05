@@ -100,6 +100,76 @@ final class Mp4Fixture {
     private static final int SAMPLE_SIZE = 16;
     private static final int SAMPLE_COUNT = 2;
 
+    /**
+     * 构造 moov 位于**文件末尾**的加密 mp4（非 faststart 形态）。
+     *
+     * 为什么需要：真实短剧源流并非都是 faststart，moov 常在尾部。
+     * 流式解密方案必须能在不读全文的前提下定位尾部 moov
+     * （Mp4.findMoov 只读盒头并按 p += size 跳跃），
+     * 而早期夹具只有 moov 在头部的形态，无法覆盖该分支。
+     *
+     * 结构：ftyp / mdat（密文）/ moov（索引，含回填的 stco 绝对偏移）
+     */
+    static byte[] buildTailMoovEncryptedMp4() {
+        try {
+            byte[] plain = buildMinimalEncryptedMp4();
+        // 从头部形态里取出 moov 段（找到 'moov' 后回退 4 字节即为盒头）
+        int moovPos = indexOf(plain, "moov".getBytes("ISO-8859-1"));
+        if (moovPos < 4) throw new IllegalStateException("夹具异常：未找到 moov");
+        int moovStart = moovPos - 4;
+        int moovSize = (int) u32At(plain, moovStart);
+        byte[] moov = java.util.Arrays.copyOfRange(plain, moovStart, moovStart + moovSize);
+        byte[] ftyp = java.util.Arrays.copyOfRange(plain, 0, moovStart);
+        // mdat：从头部形态里切出来（含盒头）
+        byte[] mdat = sliceMdat(plain);
+
+        // 组装：ftyp + mdat + moov，并在moov 内部回填 chunk 偏移
+        int mdatPayloadStart = ftyp.length + 8;
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        bos.write(ftyp, 0, ftyp.length);
+        bos.write(mdat, 0, mdat.length);
+        byte[] moovFixed = patchStco(moov, mdatPayloadStart);
+        bos.write(moovFixed, 0, moovFixed.length);
+        return bos.toByteArray();
+        } catch (Exception e) {
+            throw new RuntimeException("构造尾部 moov 夹具失败", e);
+        }
+    }
+
+    /** 取出头部形态夹具里的 mdat 盒。 */
+    private static byte[] sliceMdat(byte[] all) throws Exception {
+        int p = indexOf(all, "mdat".getBytes("ISO-8859-1"));
+        if (p < 4) throw new IllegalStateException("夹具异常：未找到 mdat");
+        int start = p - 4;
+        int size = (int) u32At(all, start);
+        return java.util.Arrays.copyOfRange(all, start, start + size);
+    }
+
+    /** 把 moov 内 stco 的 chunk 偏移改为 chunkOffset，保持 stco 盒长度不变。 */
+    private static byte[] patchStco(byte[] moov, int chunkOffset) throws Exception {
+        int p = indexOf(moov, "stco".getBytes("ISO-8859-1"));
+        if (p < 0) throw new IllegalStateException("夹具异常：moov 内未找到 stco");
+        int boxStart = p - 4;
+        int boxSize = (int) u32At(moov, boxStart);
+        byte[] out = java.util.Arrays.copyOf(moov, moov.length);
+        // payload: version/flags(4) + entry_count(4) + 偏移(4)
+        int offPos = boxStart + 8 + 8;
+        out[offPos] = (byte) (chunkOffset >>> 24);
+        out[offPos + 1] = (byte) (chunkOffset >>> 16);
+        out[offPos + 2] = (byte) (chunkOffset >>> 8);
+        out[offPos + 3] = (byte) chunkOffset;
+        // 确认盒长度未变（原地补丁的前提）
+        if ((int) u32At(out, boxStart) != boxSize) {
+            throw new IllegalStateException("夹具异常：stco 长度变化");
+        }
+        return out;
+    }
+
+    private static long u32At(byte[] b, int p) {
+        return ((long) (b[p] & 0xFF) << 24) | ((long) (b[p + 1] & 0xFF) << 16)
+             | ((long) (b[p + 2] & 0xFF) << 8) | (b[p + 3] & 0xFF);
+    }
+
     static byte[] buildMinimalEncryptedMp4() {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         try {

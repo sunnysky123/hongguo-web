@@ -183,25 +183,59 @@ public class Server {
         return (v == null || v.isEmpty()) ? null : v.get(0);
     }
 
-    /** 限流桶。 */
+    /**
+     * 限流。
+     *
+     * 历史问题：桶 map 只增不减（key 为 api_key，永不清理），
+     * 且每请求都 new long[] + ArrayList<Long> 装箱，在高频请求下产生大量短命对象。
+     *
+     * 现在改为单个 long[] 原地紧凑化（零装箱、零分配），
+     * 并在桶数超阈值时顺带淘汰空闲桶。
+     */
     private boolean rateLimit(String key) {
         long now = System.currentTimeMillis();
-        long[] arr = buckets.computeIfAbsent(key, k -> new long[0]);
+        // 清理时机：桶数量超过阈值时顺带淘汰空闲桶，避免每次请求都遍历
+        if (buckets.size() > RATE_BUCKETS_MAX) sweepBuckets(now);
+
+        long[] arr = buckets.computeIfAbsent(key, k -> new long[RATE_PER_MIN_SLOTS]);
         synchronized (arr) {
-            List<Long> keep = new ArrayList<>();
-            for (long t : arr) if (t > now - 60000) keep.add(t);
-            if (keep.size() >= ratePerMin) {
-                long[] na = new long[keep.size()];
-                for (int i = 0; i < keep.size(); i++) na[i] = keep.get(i);
-                buckets.put(key, na);
+            // 原地压缩：保留最近 60s 内的记录。零分配。
+            int n = 0;
+            for (int i = 0; i < arr.length; i++) {
+                long t = arr[i];
+                if (t > now - 60000) arr[n++] = t;
+            }
+            if (n >= ratePerMin) {
+                // 已超限：多余槽位无需清理，下次压缩会自然跳过
                 return false;
             }
-            keep.add(now);
-            long[] na = new long[keep.size()];
-            for (int i = 0; i < keep.size(); i++) na[i] = keep.get(i);
-            buckets.put(key, na);
+            if (n < arr.length) arr[n] = now;
             return true;
         }
+    }
+
+    /** 触发空闲清理的桶数量阈值：HG_RATE_BUCKETS_MAX，默认 4096。 */
+    private static final int RATE_BUCKETS_MAX = Log.envInt("HG_RATE_BUCKETS_MAX", 4096);
+
+    /** 每个桶预分配的时间戳槽位；需 >= ratePerMin，否则超出部分无法记录。 */
+    private static final int RATE_PER_MIN_SLOTS =
+            Math.max(1024, Log.envInt("RATE_PER_MIN", 120) + 64);
+
+    /** 桶空闲多久后回收：HG_RATE_BUCKET_IDLE_MS，默认 10 分钟。 */
+    private static final long RATE_BUCKET_IDLE_MS =
+            Log.envInt("HG_RATE_BUCKET_IDLE_MS", 600) * 1000L;
+
+    /** 淘汰空闲超时的桶。 */
+    private void sweepBuckets(long now) {
+        buckets.entrySet().removeIf(e -> {
+            long[] arr = e.getValue();
+            if (arr == null) return true;
+            long newest = 0;
+            synchronized (arr) {
+                for (long t : arr) if (t > newest) newest = t;
+            }
+            return now - newest > RATE_BUCKET_IDLE_MS;
+        });
     }
 
     private boolean checkAdmin(HttpExchange ex, Map<String, String> q) {
@@ -646,7 +680,59 @@ public class Server {
     private static final List<String> IMG_HOSTS = Arrays.asList(
             "fqnovelpic.com", "byteimg.com", "qznovelvod.com", "douyinpic.com", "pstatp.com");
 
-    private static final Map<String, byte[]> imgCache = new ConcurrentHashMap<>();
+    /**
+     * 图片字节缓存。
+     *
+     * 历史问题：只按「条数< 1000」判断能否写入，却**从不淘汰**，
+     * 且完全不考虑单张图片的字节大小（HEIC 封面可达数百 KB）。
+     * 结果是一旦访问过上千张不同封面，这些 byte[] 会永久驻留堆中。
+     *
+     * 现在改为访问序 LRU + 字节上限（HG_IMG_CACHE_MAX_MB，默认 64MB）。
+     */
+    private static final Map<String, byte[]> imgCache =
+            java.util.Collections.synchronizedMap(
+                    new LinkedHashMap<String, byte[]>(256, 0.75f, true) {
+                        @Override
+                        protected boolean removeEldestEntry(Map.Entry<String, byte[]> eldest) {
+                            return imgCacheBytes.get() > IMG_CACHE_MAX_BYTES;
+                        }
+                    });
+
+    /** 图片缓存当前字节数。 */
+    private static final java.util.concurrent.atomic.AtomicLong imgCacheBytes =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 图片缓存字节上限：HG_IMG_CACHE_MAX_MB，默认 64MB。 */
+    private static final long IMG_CACHE_MAX_BYTES =
+            (long) Log.envInt("HG_IMG_CACHE_MAX_MB", 64) * 1024L * 1024L;
+
+    /** 单张图片上限：HG_IMG_MAX_KB，默认 4MB，超限不缓存。 */
+    private static final long IMG_MAX_BYTES =
+            (long) Log.envInt("HG_IMG_MAX_KB", 4096) * 1024L;
+
+    private static byte[] imgCacheGet(String url) {
+        synchronized (imgCache) {
+            return imgCache.get(url);
+        }
+    }
+
+    private static void imgCachePut(String url, byte[] data) {
+        if (data.length > IMG_MAX_BYTES) return;   // 过大不入缓存
+        synchronized (imgCache) {
+            byte[] old = imgCache.put(url, data);
+            if (old != null) imgCacheBytes.addAndGet(-old.length);
+            imgCacheBytes.addAndGet(data.length);
+        }
+        // 超过上限时按 LRU 裁剪
+        synchronized (imgCache) {
+            java.util.Iterator<Map.Entry<String, byte[]>> it = imgCache.entrySet().iterator();
+            while (imgCacheBytes.get() > IMG_CACHE_MAX_BYTES && it.hasNext()) {
+                byte[] v = it.next().getValue();
+                it.remove();
+                imgCacheBytes.addAndGet(-v.length);
+            }
+        }
+    }
 
     private void handleImg(HttpExchange ex, Map<String, String> q) throws IOException {
         String raw = (q.getOrDefault("url", "")).trim();
@@ -670,7 +756,7 @@ public class Server {
             Res.fail(ex, 400, "图片域名不允许");
             return;
         }
-        byte[] hit = imgCache.get(raw);
+        byte[] hit = imgCacheGet(raw);
         if (hit != null) {
             Res.send(ex, 200, hit, Res.headers("image/jpeg", "max-age=86400"));
             return;
@@ -686,7 +772,7 @@ public class Server {
             if (ct == null) ct = "image/jpeg";
             ct = ct.toLowerCase(Locale.ROOT);
             byte[] data = r.body;
-            if (imgCache.size() < 1000) imgCache.put(raw, data);
+            imgCachePut(raw, data);
             Res.send(ex, 200, data, Res.headers(
                     ct.contains("heic") ? "image/jpeg" : ct, "max-age=86400"));
         } catch (Exception e) {

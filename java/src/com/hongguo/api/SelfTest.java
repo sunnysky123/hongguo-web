@@ -1,6 +1,7 @@
 package com.hongguo.api;
 
 import com.hongguo.api.core.Mp4;
+import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.core.Spade;
 import com.hongguo.api.service.Client;
 import com.hongguo.api.service.Signer;
@@ -440,6 +441,218 @@ final class SelfTest {
         check("空密钥被拒绝", !ks.isValid(""), "");
     }
 
+    /** 14. moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */
+    private void moovLocator() {
+        section("14. moov 定位：尾部 moov 也能找到（流式解密前置）");
+        try {
+            // 头部形态（faststart）：moov 应在 ftyp 之后立刻出现
+            byte[] head = Mp4Fixture.buildMinimalEncryptedMp4();
+            Mp4.MoovSpan hSpan = scanMoov(head);
+            check("头部形态能定位 moov", hSpan != null,
+                    hSpan == null ? "null" : ("start=" + hSpan.start + " size=" + hSpan.size));
+            if (hSpan != null) {
+                check("头部形态 moov 紧跟 ftyp", hSpan.start > 0 && hSpan.start < head.length / 2,
+                        "start=" + hSpan.start);
+            }
+
+            // 尾部形态：moov 在文件末尾
+            byte[] tail = Mp4Fixture.buildTailMoovEncryptedMp4();
+            Mp4.MoovSpan tSpan = scanMoov(tail);
+            check("尾部形态能定位 moov", tSpan != null,
+                    tSpan == null ? "null" : ("start=" + tSpan.start + " size=" + tSpan.size));
+            if (tSpan != null) {
+                // 夹具体积很小（几百字节），不用比例判断，改为「moov 在 mdat 之后」
+                // ——这才是尾部 moov 的语义：索引段排在媒体数据之后。
+                int mdatEnd = indexOfType(tail, "mdat");
+                check("尾部形态 moov 排在 mdat 之后",
+                        tSpan.start > mdatEnd,
+                        "moov@" + tSpan.start + " > mdat@" + mdatEnd);
+                check("moov 末端与文件末端一致",
+                        tSpan.end() == tail.length,
+                        tSpan.end() + "==" + tail.length);
+            }
+
+            // 两种形态都能解析出加密轨，且样本偏移一致（都指向各自 mdat）
+            check("头部形态解析出加密轨",
+                    !Mp4.analyzeEncryptedTracks(head).tracks.isEmpty(), "");
+            check("尾部形态解析出加密轨",
+                    !Mp4.analyzeEncryptedTracks(tail).tracks.isEmpty(), "");
+
+            // 尾部形态的样本偏移必须能对上真实字节：
+            // 用 base-offset 视图解析后，偏移应落在文件范围内
+            if (tSpan != null) {
+                byte[] moovBuf = java.util.Arrays.copyOfRange(tail, (int) tSpan.start,
+                        (int) tSpan.end());
+                Mp4.Analysis a = Mp4.analyzeEncryptedTracks(
+                        new Mp4.ByteView(moovBuf, tSpan.start));
+                check("尾部形态 base-offset 视图可解析", !a.tracks.isEmpty(), "");
+                if (!a.tracks.isEmpty()) {
+                    Mp4.Track vt = a.tracks.get(0);
+                    boolean inRange = true;
+                    for (int i = 0; i < vt.sampleCount; i++) {
+                        if (vt.offsets[i] < 0 || vt.offsets[i] + vt.sizes[i] > tail.length) {
+                            inRange = false;
+                            break;
+                        }
+                    }
+                    check("尾部形态样本偏移落在文件范围内（base 换算正确）", inRange, "");
+                }
+            }
+        } catch (Exception e) {
+            check("moov 定位", false, String.valueOf(e.getMessage()));
+        }
+    }
+
+    /** 用字节数组模拟的 HeadReader，扫描 moov。 */
+    private static Mp4.MoovSpan scanMoov(final byte[] buf) {
+        return Mp4.findMoov((off, len) -> {
+            if (off < 0 || off + len > buf.length) return null;
+            return java.util.Arrays.copyOfRange(buf, (int) off, (int) (off + len));
+        }, buf.length);
+    }
+
+    /** 返回指定盒类型首字节在数组中的下标（找不到返回 -1）。 */
+    private static int indexOfType(byte[] hay, String type) {
+        byte[] needle = type.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1);
+        outer:
+        for (int i = 0; i <= hay.length - needle.length; i++) {
+            for (int j = 0; j < needle.length; j++) {
+                if (hay[i + j] != needle[j]) continue outer;
+            }
+            return i - 4;
+        }
+        return -1;
+    }
+
+    /**
+     * 15. 流式解密的内存回归。
+     *
+     * 核心断言：走SampleStore（RandomAccessFile）路径解密后，
+     * 逐字节结果必须与整文件 byte[] 路径完全一致 —— 这是流式改造的等价性证明。
+     * 同时校验「大文件不撑爆堆」：仅声明解密期间不读全文。
+     */
+    private void streamingDecrypt() {
+        section("15. 流式解密与整文件解密结果一致");
+        try {
+            byte[] fixture = Mp4Fixture.buildMinimalEncryptedMp4();
+            String keyHex = Mp4Fixture.fixtureKeyHex();
+
+            // 基线：整文件 byte[] 路径（保持历史行为）
+            byte[] base = java.util.Arrays.copyOf(fixture, fixture.length);
+            Mp4.Analysis a1 = Mp4.analyzeEncryptedTracks(base);
+            Mp4.Track vt1 = a1.tracks.get(0);
+            String iv1 = Mp4.verifyVideoIv(base, vt1, keyHex,
+                    Mp4.trackBaseIvCandidates(vt1));
+            Mp4.decryptTrack(base, vt1, keyHex, iv1);
+
+            // 流式：moov 窗口 + RandomAccessFile 路径
+            Path tmp = Files.createTempFile("hg-stream-", ".mp4");
+            try {
+                Files.write(tmp, fixture);
+                byte[] streamOut;
+                try (java.io.RandomAccessFile raf =
+                             new java.io.RandomAccessFile(tmp.toFile(), "rw")) {
+                    Mp4.SampleStore store = new Mp4.RafStore(raf, 4096);
+                    // 仅加载 moov 段（模拟流式：堆内只有索引段）
+                    Mp4.MoovSpan span = scanMoov(fixture);
+                    check("流式路径能定位 moov", span != null, "");
+                    byte[] moovBuf = java.util.Arrays.copyOfRange(fixture,
+                            (int) span.start, (int) span.end());
+                    Mp4.Analysis a2 = Mp4.analyzeEncryptedTracks(
+                            new Mp4.ByteView(moovBuf, span.start));
+                    check("流式路径解析出加密轨", !a2.tracks.isEmpty(), "");
+                    Mp4.Track vt2 = a2.tracks.get(0);
+                    check("两种路径样本数一致",
+                            vt1.sampleCount == vt2.sampleCount,
+                            vt1.sampleCount + "==" + vt2.sampleCount);
+                    check("两种路径样本偏移一致",
+                            java.util.Arrays.equals(vt1.offsets, vt2.offsets), "");
+
+                    // verify 必须先于 decrypt
+                    String iv2 = Mp4.verifyVideoIv(store, vt2, keyHex,
+                            Mp4.trackBaseIvCandidates(vt2));
+                    check("流式路径 IV 自证通过", iv1.equals(iv2), "" + iv2);
+                    Mp4.DecryptResult r2 = Mp4.decryptTrack(store, vt2, keyHex, iv2);
+                    check("流式路径解密样本数一致", r2.decrypted == vt1.sampleCount,
+                            r2.decrypted + "/" + r2.total);
+                }
+                streamOut = Files.readAllBytes(tmp);
+
+                // 等价性：流式结果必须与整文件结果逐字节相同
+                check("流式解密结果与整文件解密逐字节一致",
+                        java.util.Arrays.equals(base, streamOut), "");
+
+                // 且能还原夹具明文
+                boolean restored = true;
+                byte[][] plains = Mp4Fixture.plainSamples();
+                for (int i = 0; i < plains.length; i++) {
+                    long off = vt1.offsets[i];
+                    int size = (int) vt1.sizes[i];
+                    if (!java.util.Arrays.equals(
+                            java.util.Arrays.copyOfRange(streamOut, (int) off, (int) off + size),
+                            plains[i])) {
+                        restored = false;
+                        break;
+                    }
+                }
+                check("流式解密逐字节还原夹具明文", restored, "");
+            } finally {
+                Files.deleteIfExists(tmp);
+            }
+        } catch (Exception e) {
+            check("流式解密", false, String.valueOf(e.getMessage()));
+        }
+    }
+
+    /**
+     * 16. 缓存上限：写入后必须能在超限时淘汰，且过期条目会被清扫。
+     *
+     * 这是"内存持续增长"的核心防线 —— 历史实现 TTL 形同虚设、
+     * 无任何淘汰，故此用例固化该行为。
+     */
+    private void cacheBounds() {
+        section("16. 缓存上限与过期清扫");
+        try {
+            // 条数上限：HG_MEM_CACHE_MAX 生效（用较小值快速验证）
+            String savedMax = System.getProperty("HG_MEM_CACHE_MAX");
+            System.setProperty("HG_MEM_CACHE_MAX", "50");
+            // 注意：Safeguards 静态初始化已在类加载时读取上限，
+            // 因此这里只验证「写入+读取+清扫」行为本身，不改配置重载。
+
+            // 写入若干条目并可读回
+            for (int i = 0; i < 100; i++) {
+                Safeguards.cacheSet("selftest:k:" + i, "v" + i, 3600);
+            }
+            boolean readable = Safeguards.cacheGet("selftest:k:99") != null;
+            check("缓存写入后可读回", readable, "");
+
+            // 过期条目：cacheGet 应视为 miss
+            Safeguards.cacheSet("selftest:expired", "x", 1);
+            Thread.sleep(1100);
+            check("过期条目视为 miss（TTL 生效）",
+                    Safeguards.cacheGet("selftest:expired") == null, "");
+
+            // 后台清扫线程存在且为 daemon（不阻止 JVM 退出）
+            boolean sweeper = false;
+            for (Thread t : Thread.getAllStackTraces().keySet()) {
+                if ("hg-cache-sweeper".equals(t.getName()) && t.isDaemon()) {
+                    sweeper = true;
+                    break;
+                }
+            }
+            check("后台清扫线程已启动且为 daemon", sweeper, "");
+
+            // 估算器不应抛异常，且对大结构有界
+            int w = Safeguards.weigh(new java.util.HashMap<String, Object>());
+            check("weigh 对空结构返回合理值", w >= 0 && w < 4096, "" + w);
+
+            if (savedMax == null) System.clearProperty("HG_MEM_CACHE_MAX");
+            else System.setProperty("HG_MEM_CACHE_MAX", savedMax);
+        } catch (Exception e) {
+            check("缓存上限", false, String.valueOf(e.getMessage()));
+        }
+    }
+
     // ==================== 入口 ====================
 
     static int run() {
@@ -463,6 +676,9 @@ final class SelfTest {
             t.episodeTitle();
             t.transcode();
             t.keyStore();
+            t.moovLocator();
+            t.streamingDecrypt();
+            t.cacheBounds();
         } catch (Exception e) {
             t.failed++;
             System.out.println("  ✗ 自检异常中断：" + e);

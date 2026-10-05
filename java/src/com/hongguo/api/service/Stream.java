@@ -184,6 +184,13 @@ public final class Stream {
 
     /**
      * 纯离线解密：spadeA(base64) + 密文 mp4 -> 明文 mp4。
+     *
+     * 内存策略（关键）：**全程不把整个 MP4 读进堆**。
+     * 1) 16 字节盒头顺读定位 moov，仅把moov 段（几 MB）载入内存解析索引；
+     * 2) 流式 copy 密文 -> outPath；
+     * 3) 用 outPath 的随机读写句柄逐样本解密。
+     * 因此峰值堆内存只与「moov 段大小 + 单个样本大小」有关，
+     * 与视频总时长/文件大小无关（历史实现是 50~200MB/集，32 并发时会撑爆堆）。
      */
     public static DecryptOut offlineDecrypt(String spadeAB64, Path ctPath, Path outPath)
             throws Exception {
@@ -192,8 +199,22 @@ public final class Stream {
         if (!Spade.isValidKey(key)) {
             throw new IOException("spade 解包失败（可能为 ver2/AES-GCM 或格式异常）");
         }
-        byte[] buf = Files.readAllBytes(ctPath);
-        Mp4.Analysis analysis = Mp4.analyzeEncryptedTracks(buf);
+
+        long outSize = Files.size(ctPath);
+
+        // ---- 1. 定位并仅加载 moov 段 ----
+        Mp4.Analysis analysis;
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(ctPath.toFile(), "r")) {
+            Mp4.MoovSpan moov = Mp4.findMoov(new Mp4.FileHeadReader(raf), raf.length());
+            if (moov == null) throw new IOException("密文文件无moov 盒（不是有效的 MP4）");
+            if (moov.size > Integer.MAX_VALUE - 8) {
+                throw new IOException("moov 段异常过大，无法载入内存");
+            }
+            byte[] moovBuf = new byte[(int) moov.size];
+            raf.seek(moov.start);
+            raf.readFully(moovBuf);
+            analysis = Mp4.analyzeEncryptedTracks(new Mp4.ByteView(moovBuf, moov.start));
+        }
         if (analysis.tracks.isEmpty()) throw new IOException("密文文件无加密轨");
 
         // 视频轨用于 IV 自证；随后所有加密轨（视频+音频）统一用同一 content key 解密
@@ -203,26 +224,36 @@ public final class Stream {
         }
         if (video == null) video = analysis.tracks.get(0);
 
-        List<String> cands = Mp4.trackBaseIvCandidates(video);
-        String vIv = Mp4.verifyVideoIv(buf, video, key, cands);
-        if (vIv == null) {
-            throw new IOException("content key 与密文不匹配（spade 与该密文不对应，或为 ver2 视频）");
-        }
+        // ---- 2. 流式复制密文到 outPath ----
+        streamCopy(ctPath, outPath);
 
+        // ---- 3. 逐样本原地解密 ----
         int decrypted = 0;
-        for (Mp4.Track t : analysis.tracks) {
-            // 每条轨用各自的逐样本 IV；缺失时才回退到该轨的 base_iv
-            String iv;
-            if (t == video) {
-                iv = vIv;
-            } else {
-                List<String> tc = Mp4.trackBaseIvCandidates(t);
-                iv = tc.isEmpty() ? vIv : tc.get(0);
+        // 样本缓冲取 256KB：足够覆盖绝大多数样本，又不会让并发时堆占用膨胀
+        try (java.io.RandomAccessFile out = new java.io.RandomAccessFile(outPath.toFile(), "rw")) {
+            Mp4.SampleStore store = new Mp4.RafStore(out, 256 * 1024);
+
+            // ⚠️ 必须先verify 再 decrypt：若顺序颠倒，样本 0 已是明文，
+            // avccSelfOk 仍会通过，导致错误的 content key 被误判为合法。
+            List<String> cands = Mp4.trackBaseIvCandidates(video);
+            String vIv = Mp4.verifyVideoIv(store, video, key, cands);
+            if (vIv == null) {
+                throw new IOException("content key 与密文不匹配（spade 与该密文不对应，或为 ver2 视频）");
             }
-            decrypted += Mp4.decryptTrack(buf, t, key, iv).decrypted;
+
+            for (Mp4.Track t : analysis.tracks) {
+                // 每条轨用各自的逐样本 IV；缺失时才回退到该轨的 base_iv
+                String iv;
+                if (t == video) {
+                    iv = vIv;
+                } else {
+                    List<String> tc = Mp4.trackBaseIvCandidates(t);
+                    iv = tc.isEmpty() ? vIv : tc.get(0);
+                }
+                decrypted += Mp4.decryptTrack(store, t, key, iv).decrypted;
+            }
         }
 
-        Files.write(outPath, buf);
         // 尝试 remux 剥离 CENC 信令；无 ffmpeg 则保留已解密的原始容器
         String playable = remuxPlayable(outPath);
 
@@ -230,8 +261,20 @@ public final class Stream {
         out.path = playable;
         out.key = key;
         out.tracks = decrypted;
-        out.size = buf.length;
+        out.size = outSize;
         return out;
+    }
+
+    /** 流式复制文件（固定 64KB 缓冲，不随文件大小增长内存）。 */
+    private static void streamCopy(Path src, Path dst) throws IOException {
+        byte[] buf = new byte[65536];
+        try (InputStream is = Files.newInputStream(src);
+             OutputStream os = Files.newOutputStream(dst)) {
+            int n;
+            while ((n = is.read(buf)) > 0) {
+                os.write(buf, 0, n);
+            }
+        }
     }
 
     /** ffmpeg remux 结果（同步执行）。 */
@@ -453,20 +496,48 @@ public final class Stream {
         }
     }
 
+    /**
+     * 预热线程池：有界，避免高频调用 /prewarm 时无限建线程。
+ *
+     * 背景：原实现每次调用 new Thread()，而每次预热都会跑完整的
+     * 下载 + 解密（各自持一份样本缓冲）。高频调用会让线程数与内存同步膨胀。
+ * 有界池 + CallerRunsPolicy 让超出的请求在调用方线程执行（自然限流），
+ * 而不是无限制地堆积。
+     */
+    private static final java.util.concurrent.ThreadPoolExecutor PREWARM_POOL =
+            new java.util.concurrent.ThreadPoolExecutor(
+                    2, 4,
+                    60L, java.util.concurrent.TimeUnit.SECONDS,
+                    new java.util.concurrent.LinkedBlockingQueue<>(64),
+                    r -> {
+                        Thread t = new Thread(r, "prewarm");
+                        t.setDaemon(true);
+                        return t;
+                    },
+                    new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+
     /** 预热：后台触发解密，不阻塞响应。 */
-    public static String prewarm(String vid, String quality) {
+    public static String prewarm(final String vid, final String quality) {
         String hit = cachedPath(vid, quality);
         if (hit != null) return "cached";
         // 故意不等待：让解密在后台跑
-        Thread t = new Thread(() -> {
+        try {
+            PREWARM_POOL.execute(() -> {
+                try {
+                    ensureDecrypted(vid, quality);
+                } catch (Exception e) {
+                    Log.warn("预热失败 " + vid + ": " + e.getMessage());
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // 队列与线程池都满：退化为当前线程同步执行，保证预热仍然生效
             try {
                 ensureDecrypted(vid, quality);
-            } catch (Exception e) {
-                Log.warn("预热失败 " + vid + ": " + e.getMessage());
+            } catch (Exception ex) {
+                Log.warn("预热失败 " + vid + ": " + ex.getMessage());
+                return "failed";
             }
-        }, "prewarm-" + vid);
-        t.setDaemon(true);
-        t.start();
+        }
         return "warming";
     }
 
