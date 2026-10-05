@@ -28,7 +28,10 @@ else
 fi
 
 if [ -z "${JAVAC:-}" ]; then
-  echo "  [错误] 未找到 javac，请安装 JDK 17 或更高版本"
+  echo "  [错误] 未找到 javac，本机无法编译 Java 源码。"
+  echo "         说明：发行包已内置 java/dist/hongguo-api.jar，正常启动"
+  echo "         不会走到这里 —— 仅在 JAR 缺失或修改源码后需要编译，"
+  echo "         此时请安装 JDK 17+：https://adoptium.net/"
   exit 1
 fi
 

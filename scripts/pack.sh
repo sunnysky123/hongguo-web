@@ -40,11 +40,21 @@ echo
 
 mkdir -p "$STAGE/$NAME"
 
-# 复制树：排除运行时数据、构建产物与垃圾文件
+# 发行包必须开箱即用：现场构建 JAR 打入包内（用户端无需 JDK）。
+# 仅签名包不含后端，跳过构建。
+if [ "$ONLY_SIGN" != 1 ]; then
+  echo "  构建发行 JAR（保证与源码一致）..."
+  bash "$SRC/scripts/build-java.sh"
+  if [ ! -f "$SRC/java/dist/hongguo-api.jar" ]; then
+    echo "  [错误] 构建未产出 java/dist/hongguo-api.jar，终止打包。"
+    exit 1
+  fi
+fi
+
+# 复制树：排除运行时数据、编译中间产物与垃圾文件（dist 的 JAR 会打入包内）
 tar -C "$SRC" -cf - \
   --exclude='./server/data' \
   --exclude='./java/build' \
-  --exclude='./java/dist' \
   --exclude='./.git' \
   --exclude='./jre' \
   --exclude='*.log' \
@@ -61,12 +71,11 @@ fi
 # 按需带上 Windows JRE
 if [ "$WITH_JRE" = 1 ] && [ -d "$SRC/jre" ]; then
   echo "  正在复制 Windows JRE（126MB，耗时稍久）..."
-  mkdir -p "$STAGE/$NAME/signer"
   cp -r "$SRC/jre" "$STAGE/$NAME/jre"
 else
   mkdir -p "$STAGE/$NAME/signer"
   cat > "$STAGE/$NAME/signer/需要JRE.txt" <<'EOF'
-本包未包含 Java 运行时。
+本包未包含 Java 运行时（API 服务 JAR 已内置，无需 JDK 构建）。
 
 全链路（API 服务 + 签名服务）都跑在 Java 上，不再需要 Node.js。
 请任选一种方式：
@@ -121,6 +130,7 @@ for f in signer/unidbg-sign.jar capture/fq_oversea/libmetasec_ml.so \
 done
 if [ "$ONLY_SIGN" != 1 ]; then
   for f in java/src/com/hongguo/api/Main.java \
+           java/dist/hongguo-api.jar \
            server/config/content-config.json \
            web/index.html web/app.js web/styles.css \
            scripts/start.bat scripts/start.sh scripts/build-java.bat; do

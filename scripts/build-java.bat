@@ -61,9 +61,13 @@ if not errorlevel 1 (
   goto :compile
 )
 
-echo   [错误] 未找到 javac，请安装 JDK 17 或更高版本
-echo          推荐 Temurin 17+：https://adoptium.net/
-echo          或使用包含 javac.exe 的完整 JDK 放入 jre\ 目录。
+echo   [错误] 未找到 javac，本机无法编译 Java 源码。
+echo          说明：发行包已内置 java\dist\hongguo-api.jar，
+echo          正常启动不会走到这里 —— 仅在 JAR 缺失（被删除或自行修改
+echo          源码）时才需要编译，此时请安装 JDK 17+：
+echo          https://adoptium.net/temurin/releases/?version=17
+echo          （下载 .msi 安装即可，默认选项会自动配置 JAVA_HOME）
+echo          或把包含 javac.exe 的完整 JDK 放入 jre\ 目录。
 echo.
 pause
 exit /b 1
