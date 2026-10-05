@@ -262,12 +262,17 @@ public final class Launcher {
             while ((c = br.read()) >= 0) {
                 pending.append((char) c);
                 if (c != '\n') continue;
-                String line = pending.toString();
+                // pending 以 '\n' 结尾：先剥离行尾换行再判断。
+                // 教训：此前直接对含尾 \n 的串做 matches(".*E/METASEC.*")，
+                // 而 matches 要求全串匹配、正则的 . 不吃换行 → 永远失配，
+                // 过滤完全失效（实测每次 /sign 都漏出一行）。
+                int end = pending.length() - 1;                          // 去掉 '\n'
+                if (end > 0 && pending.charAt(end - 1) == '\r') end--;   // 去掉 '\r'（若有）
+                String line = pending.substring(0, end);
                 pending.setLength(0);
-                if (line.endsWith("\r")) line = line.substring(0, line.length() - 1);
                 if (line.isEmpty()) continue;
                 if (line.toUpperCase().startsWith("SLF4J")) continue;
-                if (line.matches(".*E/METASEC.*")) {
+                if (line.contains("E/METASEC")) { // contains 足够，不引入正则语义坑
                     METASEC_COUNT.incrementAndGet();
                     if (!showMetasec) continue; // 抑制整行
                 }
