@@ -149,3 +149,8 @@ vite.config.ts.timestamp-*
 .turbo
 
 /server/data/
+
+# ---------- Java 后端（Node 已迁移为 Java） ----------
+# 构建产物不入库，start.bat 会在缺失时自动调build-java.bat 现场构建
+/java/build/
+/java/dist/

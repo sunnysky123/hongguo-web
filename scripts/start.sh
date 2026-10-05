@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # 完整启动：签名服务 + API 服务（Linux / macOS）
+#
+# 迁移说明：原Node 后端已改写为 Java（java/dist/hongguo-api.jar），
+# 签名服务本就是 Java，因此全链路只需一个 JRE，不再需要 Node.js。
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -12,16 +15,51 @@ echo "  =========================================="
 echo "    红果短剧 · 网页版"
 echo "  =========================================="
 
+# ---------- 探测 Java ----------
+find_java() {
+  local exe="java"
+  [ -x "signer/jre/bin/java" ] && { echo "signer/jre/bin/java"; return; }
+  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/java" ] && { echo "$JAVA_HOME/bin/java"; return; }
+  command -v java 2>/dev/null && return
+  echo ""
+}
+
+JAVA_BIN="$(find_java)"
+if [ -z "$JAVA_BIN" ]; then
+  echo "  [错误] 未找到 Java 运行时"
+  echo "         Linux/macOS：安装 Temurin 17+：https://adoptium.net/"
+  echo "         或把 JRE 放到 signer/jre/ 目录下"
+  exit 1
+fi
+
+# 读主版本号做闸门：签名服务依赖 JVM 内部 API，低版本会在初始化时才炸
+JAVA_MAJOR="$("$JAVA_BIN" -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -1)"
+if [ -n "$JAVA_MAJOR" ] && [ "$JAVA_MAJOR" -lt 17 ]; then
+  echo "  [错误] Java 版本过低：$JAVA_MAJOR，需要 17 或更高（推荐 25 LTS）"
+  exit 1
+fi
+echo "  [JDK] $JAVA_BIN${JAVA_MAJOR:+ (版本 $JAVA_MAJOR)}"
+
+# ---------- 校验签名资产 ----------
+JAR="java/dist/hongguo-api.jar"
+if [ ! -f "signer/unidbg-sign.jar" ]; then
+  echo "  [错误] 缺少 signer/unidbg-sign.jar，请确认解压时目录结构完整"
+  exit 1
+fi
+
+# ---------- 确保 JAR 已构建 ----------
+if [ ! -f "$JAR" ]; then
+  echo "  [构建] 未找到 API 服务 JAR，正在构建..."
+  bash scripts/build-java.sh
+fi
+
 case "$MODE" in
   --no-sign)
-    exec node scripts/launcher.js --no-sign
+    exec "$JAVA_BIN" -jar "$JAR" --no-sign
     ;;
   --sign-only)
-    exec node scripts/launcher.js --sign-only --port "$SIGN_PORT"
+    exec "$JAVA_BIN" -jar "$JAR" --sign-only --port "$SIGN_PORT"
     ;;
 esac
 
-command -v node >/dev/null 2>&1 || { echo "  [错误] 未找到 Node.js（需 v18+）"; exit 1; }
-
-# shellcheck disable=SC2086
-exec node scripts/launcher.js --port "$SIGN_PORT"
+exec "$JAVA_BIN" -jar "$JAR" --port "$SIGN_PORT"

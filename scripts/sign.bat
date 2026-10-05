@@ -15,6 +15,11 @@ echo     unidbg 签名服务
 echo   ==========================================
 echo.
 
+echo   提示：日常使用不必单独跑本脚本。
+echo         直接双击 scripts\start.bat 会自动拉起签名服务并等待就绪。
+echo         本脚本用于单独调试签名链路，或配合 --sign-only 模式使用。
+echo.
+
 REM ---------- 选择 Java：优先项目自带 JRE ----------
 set JAVA_BIN=
 if exist "jre\bin\java.exe" (

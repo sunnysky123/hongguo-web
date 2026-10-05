@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # 打包红果短剧 Web 项目为 zip。
-#   bash scripts/pack.sh              含 Windows JRE（约 74MB，开箱即用）
+#
+# 迁移说明：后端已由 Node.js 改写为 Java，因此不再需要 Node.js 运行时，
+# 目标机只要有 Java 17+ 即可（推荐 Temurin 25 LTS）。
+#
+#   bash scripts/pack.sh              含Windows JRE（约 74MB，开箱即用）
 #   bash scripts/pack.sh --no-jre     不含 JRE（约 32MB，需目标机自备 Java 17+，推荐 25 LTS）
 #   bash scripts/pack.sh --sign-only  只打签名服务与脚本
 set -euo pipefail
@@ -36,10 +40,11 @@ echo
 
 mkdir -p "$STAGE/$NAME"
 
-# 复制树：排除运行时数据与垃圾文件
+# 复制树：排除运行时数据、构建产物与垃圾文件
 tar -C "$SRC" -cf - \
   --exclude='./server/data' \
-  --exclude='./node_modules' \
+  --exclude='./java/build' \
+  --exclude='./java/dist' \
   --exclude='./.git' \
   --exclude='./signer/jre' \
   --exclude='*.log' \
@@ -50,7 +55,7 @@ tar -C "$SRC" -cf - \
 
 # 仅签名包：去掉后端与前端
 if [ "$ONLY_SIGN" = 1 ]; then
-  rm -rf "$STAGE/$NAME/server" "$STAGE/$NAME/web"
+  rm -rf "$STAGE/$NAME/server" "$STAGE/$NAME/web" "$STAGE/$NAME/java"
 fi
 
 # 按需带上 Windows JRE
@@ -63,6 +68,7 @@ else
   cat > "$STAGE/$NAME/signer/需要JRE.txt" <<'EOF'
 本包未包含 Java 运行时。
 
+全链路（API 服务 + 签名服务）都跑在 Java 上，不再需要 Node.js。
 请任选一种方式：
   1) 双击 scripts\install-jre.bat 自动下载 Temurin JRE 25 到本目录
   2) 手动下载 https://adoptium.net/temurin/releases/?version=17
@@ -72,18 +78,18 @@ EOF
   [ "$ONLY_SIGN" = 1 ] && rm -f "$STAGE/$NAME/signer/需要JRE.txt"
 fi
 
-# 重建空的运行时目录
-mkdir -p "$STAGE/$NAME/server/data/stream-cache" 2>/dev/null || true
+# 重建空的运行时目录（仅签名包不含后端，不要把server/ 重新mkdir 回来）
 if [ "$ONLY_SIGN" != 1 ]; then
+  mkdir -p "$STAGE/$NAME/server/data/stream-cache"
   cat > "$STAGE/$NAME/server/data/.gitkeep" <<'EOF'
 运行时数据目录。首次启动会自动签发 server/data/apikeys.json，
+设备标识落在 server/data/device.json，
 解密成品缓存在 server/data/stream-cache/。
 EOF
 fi
 
 # 保留可执行位
 find "$STAGE/$NAME/scripts" -name '*.sh' -exec chmod +x {} + 2>/dev/null || true
-find "$STAGE/$NAME/scripts" -name '*.js' -exec chmod +x {} + 2>/dev/null || true
 
 ( cd "$STAGE" && zip -qr9 "$OUT" "$NAME" )
 
@@ -113,6 +119,14 @@ for f in signer/unidbg-sign.jar capture/fq_oversea/libmetasec_ml.so \
          capture/fq_oversea/libc++_shared.so capture/fq_oversea/ms_16777218.bin; do
   check "$f"
 done
+if [ "$ONLY_SIGN" != 1 ]; then
+  for f in java/src/com/hongguo/api/Main.java \
+           server/config/content-config.json \
+           web/index.html web/app.js web/styles.css \
+           scripts/start.bat scripts/start.sh scripts/build-java.bat; do
+    check "$f"
+  done
+fi
 if [ "$WITH_JRE" = 1 ]; then
   for f in signer/jre/bin/java.exe signer/jre/bin/server/jvm.dll \
            signer/jre/lib/modules signer/jre/release; do

@@ -1212,7 +1212,7 @@
     setStatus('出错：' + msg, 'err');
     view.innerHTML = `<div class="empty"><span class="big">⚠️</span>
       <div>${esc(msg)}</div>
-      <div class="muted" style="margin-top:8px">请确认后端已启动：<code>npm start</code></div></div>`;
+      <div class="muted" style="margin-top:8px">请确认后端已启动：<code>scripts\start.bat</code></div></div>`;
     toast('请求失败：' + msg);
   }
 
@@ -1374,7 +1374,7 @@
       setStatus('正在等待后端启动…', 'err');
       view.innerHTML = `<div class="empty"><span class="big">🔌</span>
         <div>未连接到后端服务，正在自动重试…</div>
-        <div class="muted" style="margin-top:8px">请在项目目录运行 <code>npm start</code>（默认 http://127.0.0.1:8000）<br>
+        <div class="muted" style="margin-top:8px">请在项目目录运行 <code>scripts\start.bat</code>（默认 http://127.0.0.1:8000）<br>
         服务起来后本页会自动继续加载</div></div>`;
       // 后端没起时 /api-key 必然拿不到，这里显式再触发一轮带重试的获取：
       // ensureKey 成功后会 adoptKey → 自动关闭密钥卡片并 loadTab 恢复首页。
