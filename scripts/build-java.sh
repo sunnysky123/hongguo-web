@@ -63,7 +63,13 @@ Implementation-Version: 1.0.0
 EOF
 
 rm -f "$JAR"
-(cd "$BUILD/classes" && jar --create --file "$JAR" --manifest "$BUILD/manifest.txt" .)
+# jar 与 javac 同目录调用，避免 PATH 上只有 JRE 时裸 jar 找不到
+JAR_BIN="$(cd "$(dirname "$JAVAC")" && pwd)"
+if [ -x "$JAR_BIN/jar" ]; then
+  (cd "$BUILD/classes" && "$JAR_BIN/jar" --create --file "$JAR" --manifest "$BUILD/manifest.txt" .)
+else
+  (cd "$BUILD/classes" && jar --create --file "$JAR" --manifest "$BUILD/manifest.txt" .)
+fi
 
 SIZE=$(du -h "$JAR" | cut -f1)
 echo ""
