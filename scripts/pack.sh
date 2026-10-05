@@ -93,7 +93,9 @@ if [ "$ONLY_SIGN" != 1 ]; then
   cat > "$STAGE/$NAME/server/data/.gitkeep" <<'EOF'
 运行时数据目录。首次启动会自动签发 server/data/apikeys.json，
 设备标识落在 server/data/device.json，
-解密成品缓存在 server/data/stream-cache/。
+解密成品缓存在 server/data/stream-cache/，
+启动器自身的检查/排障日志写入 server/data/log/start.log
+（该目录由 start.bat / start.sh 首次运行时自动创建）。
 EOF
 fi
 

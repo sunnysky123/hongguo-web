@@ -172,14 +172,9 @@ public final class Launcher {
         Log.info("管理口令(ADMIN_TOKEN) " + server.adminToken());
 
         server.start(bindHost, apiPort);
-        Log.info("");
-        Log.info("  ----------------------------------------");
-        Log.info("  网页版  http://" + bindHost + ":" + apiPort + "/");
-        Log.info("  ----------------------------------------");
-        if (signBase != null) Log.info("  签名服务" + signBase);
-        Log.info("  ----------------------------------------");
-        Log.info("  按 Ctrl-C 停止 API 服务");
-        Log.info("");
+        // 不再重复打印服务信息：Server.start() 已输出地址、签名后端与上游 host，
+        // 这里只补一行停止提示，避免同一批信息在控制台出现两遍。
+        Log.info("按 Ctrl-C 停止");
     }
 
     /**
