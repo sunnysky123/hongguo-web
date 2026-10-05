@@ -80,7 +80,8 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-dist
+# 仅根目录（裸 dist 会误伤 java/dist —— 该目录下的 JAR 需要入库）
+/dist
 .output
 
 # Gatsby files
@@ -151,6 +152,5 @@ vite.config.ts.timestamp-*
 /server/data/
 
 # ---------- Java 后端（Node 已迁移为 Java） ----------
-# 构建产物不入库，start.bat 会在缺失时自动调build-java.bat 现场构建
+# 编译中间产物不入库；java/dist/hongguo-api.jar 已入库，clone 后可直接运行
 /java/build/
-/java/dist/

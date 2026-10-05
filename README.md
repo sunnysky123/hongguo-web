@@ -74,7 +74,7 @@ JAR 不存在时先构建：`bash scripts/build-java.sh`（或 Windows 下双击
 | Java | **>= 17**（发行包自带 `jre` Temurin 25 LTS，推荐 25） | 必需 |
 | ffmpeg | 任意近期版本 | 可选，剥离 CENC 信令让浏览器可直接播 |
 
-**发行包开箱即用**：包内已含构建好的 `java/dist/hongguo-api.jar`，
+**clone 或发行包均可直接运行**：仓库已含构建好的 `java/dist/hongguo-api.jar`，
 目标机只需要 Java 运行时（JRE），**不需要 JDK，不需要编译**。
 JDK 17+ 仅在修改源码后重新构建时才需要 ——
 构建只用 JDK 自带的 `javac` 与 `jar`，无任何第三方依赖、不用联网拉包。
@@ -139,7 +139,7 @@ hongguo-web/
 │   │   ├── core/                 Spade / Mp4 / Device / KeyStore / Safeguards
 │   │   ├── service/              Signer / Client / Stream / Res
 │   │   └── util/                 Json / Crypto / Http / Log
-│   ├── dist/hongguo-api.jar      构建产物（不入库，start.bat 会自动构建）
+│   └── dist/hongguo-api.jar      API 服务 JAR（已入库，clone 后可直接运行）
 │   └── build/                    编译中间产物
 ├── signer/
 │   └── unidbg-sign.jar           unidbg 签名服务（跨平台 fat JAR，未改动）
