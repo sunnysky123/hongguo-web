@@ -1,5 +1,7 @@
 package com.hongguo.api;
 
+import com.hongguo.api.util.Log;
+
 /**
  * 入口。
  *
@@ -15,6 +17,10 @@ package com.hongguo.api;
 public final class Main {
 
     public static void main(String[] args) throws Exception {
+        // 先锁定 UTF-8 输出：所有入口（自检/签名/完整）都经由此处，
+        // 否则中文 Windows 控制台会出现「红红果果」式的双重编码乱码。
+        Log.initEncoding();
+
         for (String a : args) {
             if (a.equals("--version") || a.equals("-v")) {
                 System.out.println("hongguo-api 1.0.0");

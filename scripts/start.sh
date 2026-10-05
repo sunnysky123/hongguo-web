@@ -60,11 +60,11 @@ fi
 
 case "$MODE" in
   --no-sign)
-    exec "$JAVA_BIN" -jar "$JAR" --no-sign
+    exec "$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" --no-sign
     ;;
   --sign-only)
-    exec "$JAVA_BIN" -jar "$JAR" --sign-only --port "$SIGN_PORT"
+    exec "$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" --sign-only --port "$SIGN_PORT"
     ;;
 esac
 
-exec "$JAVA_BIN" -jar "$JAR" --port "$SIGN_PORT"
+exec "$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" --port "$SIGN_PORT"

@@ -94,7 +94,7 @@ if /i "!MODE!"=="nosign" (
   echo   模式：仅 API 服务（免签接口，推荐/榜单/最新/筛选）
   echo.
   set "PORT=!API_PORT!"
-  java -jar java\dist\hongguo-api.jar --no-sign
+  java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --no-sign
   goto :end
 )
 
@@ -102,11 +102,11 @@ if /i "!MODE!"=="signonly" (
   echo   模式：仅签名服务
   echo.
   set "SIGN_PORT=!SIGN_PORT!"
-  java -jar java\dist\hongguo-api.jar --sign-only
+  java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --sign-only
   goto :end
 )
 
-java -jar java\dist\hongguo-api.jar --port !SIGN_PORT!
+java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --port !SIGN_PORT!
 if errorlevel 1 (
   echo.
   echo   [错误] 启动失败，请查看上方日志

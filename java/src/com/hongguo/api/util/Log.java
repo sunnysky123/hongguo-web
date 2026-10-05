@@ -1,6 +1,9 @@
 package com.hongguo.api.util;
 
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
@@ -9,7 +12,29 @@ public final class Log {
 
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private static boolean encodingFixed = false;
+
     private Log() {}
+
+    /**
+     * 把标准输出/错误流锁定为 UTF-8（幂等）。
+     *
+     * 背景：JDK 19 起 {@code stdout.encoding} 默认跟随控制台代码页。
+     * 中文Windows 用户的 start.bat 已执行 {@code chcp 65001}（控制台按 UTF-8
+     * 解码），而 JVM 却按 GBK 编码输出，双重编码导致每个汉字重复成
+     * 「红红果果短短剧剧」。本项目所有文本（源码、配置、网页、转发给用户的
+     * 签名日志）都是 UTF-8，输出统一到 UTF-8 才能与控制台解码一致。
+     *
+     * 幂等：重复调用只生效一次，避免多次包装。
+     */
+    public static void initEncoding() {
+        if (encodingFixed) return;
+        encodingFixed = true;
+        System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true,
+                StandardCharsets.UTF_8));
+        System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true,
+                StandardCharsets.UTF_8));
+    }
 
     public static void info(String msg)  { write(System.out, msg, false); }
     public static void warn(String msg)  { write(System.out, msg, true); }
