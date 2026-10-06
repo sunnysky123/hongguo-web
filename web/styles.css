@@ -307,18 +307,57 @@ body {
 
 .load-more { display: grid; place-items: center; padding: 26px 0; }
 
-/* 无限滚动：底部「已到底」提示与哨兵 */
-#infFoot { min-height: 1px; }
-#infFoot .loading { padding: 26px 0; }
-.end-tip {
-  padding: 26px 0 34px;
-  text-align: center;
-  color: var(--fg-mute);
-  font-size: 13px;
-  opacity: .75;
+/* 「加载更多」卡片：grid 的最后一个子元素，点击加载下一页 */
+.more-card {
+  cursor: pointer;
+  transition: transform .16s;
+  user-select: none;
 }
-/* 哨兵不可见但保持在文档流中，IntersectionObserver 才能正确判定触底 */
-#infSentinel { height: 1px; }
+.more-card:hover { transform: translateY(-3px); }
+.more-card .poster {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+}
+.more-card .more-ph {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  background: linear-gradient(150deg, var(--bg-elev2), var(--bg-elev));
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+}
+.more-card .more-plus {
+  font-size: 40px;
+  line-height: 1;
+  color: var(--fg-mute);
+  opacity: .7;
+}
+.more-card .more-end {
+  font-size: 30px;
+  line-height: 1;
+  color: var(--fg-mute);
+  opacity: .5;
+}
+.more-card .title { margin: 8px 0 4px; }
+/* 到底态：不可点，也不需要 hover 位移 */
+.more-card.is-end { cursor: default; }
+.more-card.is-end:hover { transform: none; }
+
+/* 加载中转圈 */
+.spinner {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--fg-mute);
+  border-top-color: transparent;
+  opacity: .8;
+  animation: more-spin .8s linear infinite;
+}
+@keyframes more-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 状态栏 ---------- */
 .statusbar {

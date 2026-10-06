@@ -370,18 +370,21 @@
   // ---------- 页面状态 ----------
   const state = { tab: 'home', offset: 0, busy: false, items: [] };
 
-  // ---------- 无限滚动 ----------
+  // ---------- 分页加载 ----------
   // 每个 tab 的分页上下文：记录已加载的 id、下一页偏移、上游是否还有。
   // offset 语义各接口不同：rank 用上游 next_offset，latest/browse 用已加载条数，
   // search 用已加载条数（配合 seen 回传去重）。
+  //
+  // 触发方式为网格末尾的「加载更多」卡片（点击），不用滚动触底：
+  // 哨兵 + IntersectionObserver 在实际使用中不触发（滚动容器识别不可靠），
+  // 显式按钮更可控，也能让用户明确知道还有更多内容。
   const inf = {
-    key: null,        // 当前上下文的标识，切tab/改筛选条件时置 null 以重置
+    key: null,        // 当前上下文的标识，切tab/改筛选条件时重置
     offset: 0,
     hasMore: true,
     loading: false,
     seen: [],         // 已展示的 series_id，续页时回传给上游去重
     ids: new Set(),   // 本地兜底去重
-    loader: null,     // IntersectionObserver
   };
 
   /** 重置分页上下文（切换 tab 或改变查询条件时调用）。 */
@@ -391,14 +394,9 @@
     inf.hasMore = true;
     inf.seen = [];
     inf.ids = new Set();
-    teardownInf();
   }
 
-  function teardownInf() {
-    if (inf.loader) { inf.loader.disconnect(); inf.loader = null; }
-  }
-
-  /** 累计已见 id 的逗号串，用于/seen 参数。 */
+  /** 累计已见 id 的逗号串，用于 /seen 参数。 */
   function seenParam() {
     // 上游 filter_ids 越长请求体越大，只回传最近一段即可覆盖翻页重叠区
     const tail = inf.seen.slice(-120);
@@ -406,29 +404,77 @@
   }
 
   /**
-   * 渲染底部状态并挂载触底观察器。
-   * 用哨兵元素 + IntersectionObserver，而不是 scroll 事件：
-   * 后者需要节流且在移动端易抖动，哨兵方式更稳且不占主线程。
+   * 首屏渲染后登记已展示的剧集，并把 offset 推到已加载条数。
+   *
+   * 这两步都必须做：
+   *  - 不登记 ids，续页与首屏重叠的条目会被当成新内容重复追加；
+   *  - 不推进 offset，首次点「加载更多」会带着 offset=0 再请求一次首屏，
+   *    看起来像"点了没反应，只是把同样的卡片又贴了一遍"。
+   * 首屏请求不带 offset，拿不到上游的 next_offset，只能按已加载条数推算。
    */
-  function mountSentinel() {
-    teardownInf();
-    const el = document.getElementById('infSentinel');
-    if (!el) return;
-    inf.loader = new IntersectionObserver((entries) => {
-      if (entries.some(e => e.isIntersecting)) {
-        loadMore();
-      }
-    }, { rootMargin: '300px 0px' });
-    inf.loader.observe(el);
+  function seedInf(items) {
+    (items || []).forEach(it => {
+      if (!it || !it.series_id) return;
+      const sid = String(it.series_id);
+      inf.ids.add(sid);
+      inf.seen.push(sid);
+    });
+    // 用原始条数而非去重后条数：上游偶发重复时也能保证窗口严格前移
+    inf.offset = (items || []).length;
   }
 
-  /** 追加一页：infinite=true 时由各 tab 提供 fetchPage 实现。 */
+  /**
+   * 更新网格末尾的「加载更多」卡片。
+   *
+   * 它是 grid 内的最后一个子元素，点击即加载下一页；
+   * 加载中显示转圈提示，无更多内容时替换为「已经到底了」。
+   */
+  function renderMoreCard(mode) {
+    const grid = $('grid') || $('browseResult');
+    if (!grid) return;
+    let el = document.getElementById('moreCard');
+    if (!el) {
+      el = document.createElement('article');
+      el.id = 'moreCard';
+      el.className = 'more-card';
+      grid.appendChild(el);
+    }
+    if (mode === 'loading') {
+      el.classList.remove('is-end');
+      el.innerHTML = '<div class="poster"><div class="ph more-ph">'
+        + '<span class="spinner" aria-hidden="true"></span></div></div>'
+        + '<h3 class="title">加载中…</h3>'
+        + '<div class="tags">正在获取更多内容</div>';
+      el.onclick = null;
+      el.style.cursor = 'default';
+      return;
+    }
+    if (!inf.hasMore) {
+      el.classList.add('is-end');
+      el.innerHTML = '<div class="poster"><div class="ph more-ph">'
+        + '<span class="more-end">—</span></div></div>'
+        + '<h3 class="title">已经到底了</h3>'
+        + '<div class="tags">没有更多内容</div>';
+      el.onclick = null;
+      el.style.cursor = 'default';
+      return;
+    }
+    el.classList.remove('is-end');
+    el.innerHTML = '<div class="poster"><div class="ph more-ph">'
+      + '<span class="more-plus" aria-hidden="true">+</span></div></div>'
+      + '<h3 class="title">加载更多</h3>'
+      + '<div class="tags">点击查看后续内容</div>';
+    el.onclick = loadMore;
+    el.style.cursor = 'pointer';
+  }
+
+  /** 点击「加载更多」后拉取下一页。 */
   async function loadMore() {
     if (inf.loading || !inf.hasMore) return;
     const fn = inf.fetchPage;
     if (typeof fn !== 'function') return;
     inf.loading = true;
-    renderFoot('loading');
+    renderMoreCard('loading');
     try {
       await fn();
     } catch (e) {
@@ -436,34 +482,25 @@
       inf.hasMore = false;
     } finally {
       inf.loading = false;
-      renderFoot();
+      renderMoreCard();
     }
   }
 
-  /** 更新底部提示：加载中/ 已到底 / 可继续下滑。 */
-  function renderFoot(mode) {
-    const el = document.getElementById('infFoot');
-    if (!el) return;
-    if (mode === 'loading') {
-      el.innerHTML = '<div class="loading">加载中…</div>';
-      return;
-    }
-    if (!inf.hasMore) {
-      el.innerHTML = '<div class="end-tip">— 已经到底了 —</div>';
-      return;
-    }
-    el.innerHTML = '<div id="infSentinel"></div>';
-  }
-
-  /** 把新一页追加到现有 grid（不整体重绘，避免闪烁与滚动位置跳动）。 */
+  /**
+   * 把新一页追加到现有 grid（不整体重绘，避免闪烁与滚动位置跳动）。
+   * 「加载更多」卡片始终保持在最后：先摘除、追加卡片、再重新挂上。
+   */
   function appendCards(items, gridSel) {
     const grid = $(gridSel || 'grid');
     if (!grid) return;
+    const mc = document.getElementById('moreCard');
+    if (mc) mc.remove();
     grid.insertAdjacentHTML('beforeend', items.map(cardTemplate).join(''));
-    bindCards();
     inf.seen.push(...items.map(it => String(it.series_id || '')).filter(Boolean));
     items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
     state.items = state.items.concat(items);
+    bindCards();
+    if (mc) grid.appendChild(mc);
   }
 
   /**
@@ -480,13 +517,13 @@
     inf.offset = typeof spec.offsetOf === 'function'
       ? (spec.offsetOf(j) || inf.offset + items.length)
       : inf.offset + items.length;
+    renderMoreCard();
   }
 
   async function loadTab(tab) {
     state.tab = tab;
     state.offset = 0;
     state.items = [];
-    teardownInf();
     document.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === tab);
     });
@@ -502,23 +539,62 @@
     }
   }
 
-  async function loadRank(board, title) {
+  /** 榜单页可切换的三个榜单，取值需与后端 /rank 的 board 对应。 */
+  const RANK_BOARDS = [['recommend', '推荐榜'], ['hot', '热播榜'], ['new', '新剧榜']];
+
+  /** 榜单切换按钮。cur 为当前高亮项。 */
+  function rankChipsHtml(cur) {
+    return `<div class="chips" id="rankChips">${RANK_BOARDS.map(([b, n]) => `<button class="chip${b === cur ? ' on' : ''}" data-b="${b}">${n}</button>`).join('')}</div>`;
+  }
+
+  /**
+   * 绑定榜单切换按钮。
+   *
+   * 每次切榜 loadRank 都会重绘整个 section-head，所以必须在这里重新绑定一次；
+   * 漏了会导致第二次点击彻底失效（元素已被替换，监听器随之丢失）。
+   */
+  function bindRankChips() {
+    const box = $('rankChips');
+    if (!box) return;
+    box.addEventListener('click', async (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      const b = chip.dataset.b;
+      if (!b) return;
+      // 先就地高亮并把网格换成加载中，section-head 保持不动，
+      // 按钮不会在等待响应期间消失（这正是原先的 bug）
+      box.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === chip));
+      const grid = $('grid');
+      if (grid) grid.innerHTML = '<div class="loading">加载中…</div>';
+      setStatus('请求中…');
+      try {
+        await loadRank(b, chip.textContent, true);
+      } catch (err) {
+        handleError(err);
+      }
+    });
+  }
+
+  /**
+   * 加载榜单。withChips 为真时一并渲染切换按钮 —— 榜单页需要，
+   * 「推荐」tab 复用本函数但不显示按钮，故默认关闭。
+   */
+  async function loadRank(board, title, withChips) {
     const j = await api(`/rank?board=${encodeURIComponent(board)}&limit=30`);
     state.items = j.items || [];
-    view.innerHTML = `<div class="section-head"><h2>${esc(title || j.name || '榜单')}</h2>
+    view.innerHTML = `<div class="section-head"><h2>${esc(withChips ? '榜单' : (title || j.name || '榜单'))}</h2>
+      ${withChips ? rankChipsHtml(board) : ''}
       <span class="muted" id="rankCount">${state.items.length} 部</span></div>
-      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
-      <div id="infFoot"></div>`;
+      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>`;
+    if (withChips) bindRankChips();
     bindCards();
     setStatus(`${title || '榜单'} · ${state.items.length} 部`, 'ok');
-    // 无后续页时不挂观察器，省掉一次无谓的哨兵
-    if (j.next_offset) {
-      resetInf(`rank:${board}`);
-      inf.nextOffset = j.next_offset;
-      inf.fetchPage = () => fetchRankMore(board, title);
-      renderFoot();
-      mountSentinel();
-    }
+    // 首屏请求不带 offset，拿不到 has_more：统一按「还有更多」处理，
+    // 点一次加载后服务端才会给出真实的 has_more
+    resetInf(`rank:${board}`);
+    seedInf(state.items);
+    inf.fetchPage = () => fetchRankMore(board, title);
+    renderMoreCard();
   }
 
   /** 榜单续页：走 offset 分页路径，直接取上游下一段。 */
@@ -534,40 +610,11 @@
   }
 
   async function renderRankPanel() {
-    const boards = [['recommend', '推荐榜'], ['hot', '热播榜'], ['new', '新剧榜']];
-    // 初始选热播榜（i === 1）而非推荐榜：推荐 tab 用的就是 recommend，
+    // 初始选热播榜（而非推荐榜）：推荐 tab 用的就是 recommend，
     // 若这里也用 recommend，两个 tab 首屏会渲染出完全相同的内容。
     // 后端 /rank 按 board 取不同上游榜单（sub_selected_items 不同），
     // 缓存 key 也按 board 区分，因此换默认项即可让两个 tab 内容区分开。
-    const DEF_BOARD = 'hot';
-    const j = await api(`/rank?board=${encodeURIComponent(DEF_BOARD)}&limit=30`);
-    state.items = j.items || [];
-    view.innerHTML = `<div class="section-head">
-        <h2>榜单</h2>
-        <div class="chips" id="rankChips">
-          ${boards.map(([b, n]) => `<button class="chip${b === DEF_BOARD ? ' on' : ''}" data-b="${b}">${n}</button>`).join('')}
-        </div>
-        <span class="muted" id="rankCount">${state.items.length} 部</span>
-      </div>
-      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
-      <div id="infFoot"></div>`;
-    $('rankChips').addEventListener('click', async (e) => {
-      const chip = e.target.closest('.chip');
-      if (!chip) return;
-      const b = chip.dataset.b;
-      if (!b) return;
-      $('rankChips').querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === chip));
-      view.innerHTML = '<div class="loading">加载中…</div>';
-      await loadRank(b, chip.textContent);
-    });
-    bindCards();
-    setStatus(`榜单 · ${DEF_BOARD === 'hot' ? '热播榜' : DEF_BOARD} · ${state.items.length} 部`, 'ok');
-    if (j.next_offset) {
-      resetInf(`rank:${DEF_BOARD}`);
-      inf.fetchPage = () => fetchRankMore(DEF_BOARD, DEF_BOARD === 'hot' ? '热播榜' : DEF_BOARD);
-      renderFoot();
-      mountSentinel();
-    }
+    await loadRank('hot', '热播榜', true);
   }
 
   async function loadLatest(genre, onlyToday) {
@@ -582,8 +629,7 @@
         </div>
         <span class="muted" id="latestCount">${state.items.length} 部</span>
       </div>
-      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
-      <div id="infFoot"></div>`;
+      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>`;
     $('genreChips').addEventListener('click', async (e) => {
       const chip = e.target.closest('.chip');
       const g = chip && chip.dataset.g;
@@ -596,11 +642,9 @@
     bindCards();
     setStatus(`${j.name || ''} ${j.mode || ''} · ${state.items.length} 部`, 'ok');
     resetInf(`latest:${genre}:${onlyToday}`);
-    state.items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
-    state.items.forEach(it => { if (it.series_id) inf.seen.push(String(it.series_id)); });
+    seedInf(state.items);
     inf.fetchPage = () => fetchLatestMore(genre, onlyToday);
-    renderFoot();
-    mountSentinel();
+    renderMoreCard();
   }
 
   /** 最新上架续页：把已看过的 id 一起回传，上游据此去重。 */
@@ -622,13 +666,46 @@
       </div>
       <div id="filterBox" class="chips" style="margin:12px 0"></div>
       <div class="section-head">
-        <h2 id="browseTitle">请选择筛选条件</h2>
-        <button class="btn" id="browseGo">浏览</button>
+        <h2 id="browseTitle">加载中…</h2>
+        <button class="btn" id="browseGo">应用筛选</button>
       </div>
       <div id="browseResult" class="grid"></div>`;
 
     const sel = { genre: 'short_play', theme: new Set(), days: new Set(), sort: 'online_time' };
     let filterRows = [];
+    // 竞态保护：连续切换类型/条件会并发多次请求，只认最后一次的结果，
+    // 否则先发的慢响应可能覆盖后发的快响应，标题与结果对不上。
+    let browseSeq = 0;
+    // 已应用条件的快照（归一化后的字符串，与 selKey() 同格式）。
+    // 页面打开即自动加载，故初始即视为"已应用"；
+    // 与之不同的条件才提示用户需要点「应用筛选」。
+    let applied = 'short_play|||online_time';
+
+    /** 把当前筛选条件序列化成可比较的字符串。 */
+    function selKey() {
+      return `${sel.genre}|${[...sel.theme].sort().join(',')}|${[...sel.days].sort().join(',')}|${sel.sort}`;
+    }
+
+    // 标记「有条件尚未应用」，让用户知道结果区还停留在旧条件上
+    function markDirty() {
+      const b = $('browseGo');
+      if (!b) return;
+      const dirty = selKey() !== applied;
+      b.classList.toggle('primary', dirty);
+      b.title = dirty ? '条件已变更，点此重新查询' : '按当前条件重新查询';
+    }
+
+    /** 把当前筛选条件回显到标题上。 */
+    function updateBrowseTitle() {
+      const t = $('browseTitle');
+      if (!t) return;
+      const gname = (genres.find((x) => x[0] === sel.genre) || [, sel.genre])[1];
+      const sname = sel.sort === 'hot_score' ? '最热' : '最新';
+      const extra = [];
+      if (sel.theme.size) extra.push(`${sel.theme.size} 个主题`);
+      if (sel.days.size) extra.push(`${[...sel.days][0]} 天内`);
+      t.textContent = `${gname} · ${sname}${extra.length ? ` · ${extra.join(' · ')}` : ''}${selKey() === applied ? '' : ' · 未应用'}`;
+    }
 
     async function loadFilters(genre) {
       sel.genre = genre;
@@ -646,7 +723,7 @@
       for (const row of filterRows) {
         if (row.type === 'theme') {
           parts.push(`<div class="chips" data-row="theme">
-            ${row.items.slice(0, 14).map((it) => `<button class="chip" data-v="${esc(it.name)}">${esc(it.name)}</button>`).join('')}
+            ${row.items.slice(0, 14).map((it) => `<button class="chip" data-row="theme" data-v="${esc(it.name)}">${esc(it.name)}</button>`).join('')}
           </div>`);
         }
       }
@@ -660,6 +737,14 @@
       $('filterBox').innerHTML = parts.join('');
     }
 
+    // 勾选筛选条件只改状态、不立即请求：主题可多选 14 项，逐个勾就逐个请求太浪费。
+    // 改为标记「未应用」+ 高亮按钮，由用户点「应用筛选」统一提交一次。
+    // 请求成功后 doBrowse 会刷新 applied 快照，高亮随之熄灭。
+    function onFilterChange() {
+      markDirty();
+      updateBrowseTitle();
+    }
+
     $('filterBox').addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');
       if (!chip) return;
@@ -667,30 +752,35 @@
       if (row === 'sort') {
         $('filterBox').querySelectorAll('[data-row="sort"]').forEach((c) => c.classList.toggle('on', c === chip));
         sel.sort = chip.dataset.v;
-        return;
+        return onFilterChange();
       }
       if (row === 'days') {
         const on = chip.classList.toggle('on');
         on ? sel.days.add(chip.dataset.v) : sel.days.delete(chip.dataset.v);
-        return;
+        return onFilterChange();
       }
       if (row === 'theme') {
         const on = chip.classList.toggle('on');
         on ? sel.theme.add(chip.dataset.v) : sel.theme.delete(chip.dataset.v);
+        return onFilterChange();
       }
     });
 
     $('browseGo').addEventListener('click', doBrowse);
-    $('browseGenres').addEventListener('click', (e) => {
+    $('browseGenres').addEventListener('click', async (e) => {
       const g = e.target.dataset.g;
       if (!g) return;
       $('browseGenres').querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === e.target));
       sel.theme.clear(); sel.days.clear();
-      loadFilters(g);
+      // 换类型后先取回该类型的筛选项，再按默认条件直接出结果；
+      // sort 沿用用户已选，主题/天数已清空，故这里同样无需再点「应用筛选」
+      await loadFilters(g);
+      doBrowse();
     });
 
     async function doBrowse() {
       const box = $('browseResult');
+      const my = ++browseSeq;
       box.innerHTML = '<div class="loading">加载中…</div>';
       setStatus('浏览请求中…');
       const buildQuery = (off) => {
@@ -705,26 +795,26 @@
       };
       try {
         const j = await api(`/browse?${buildQuery(0)}`);
+        if (my !== browseSeq) return;   // 已有更新的请求在飞，丢弃本次结果
         state.items = j.items || [];
-        box.innerHTML = (state.items.map(cardTemplate).join('')) || '<div class="empty">无结果</div>';
+        // 快照当前条件：本次结果即这些条件的产出，之后不再算"未应用"
+        applied = selKey();
+        markDirty();
+        updateBrowseTitle();
+        if (!state.items.length) {
+          box.innerHTML = '<div class="empty">无结果</div>';
+          setStatus('浏览 · 0 部', 'ok');
+          return;
+        }
+        box.innerHTML = state.items.map(cardTemplate).join('');
         bindCards();
         setStatus(`浏览 · ${state.items.length} 部`, 'ok');
-        // 结果区后面补底部哨兵；无后续页时直接显示到底提示
-        let foot = document.getElementById('infFoot');
-        if (!foot) {
-          foot = document.createElement('div');
-          foot.id = 'infFoot';
-          box.insertAdjacentElement('afterend', foot);
-        }
         resetInf(`browse:${JSON.stringify(sel)}`);
-        state.items.forEach(it => {
-          if (it.series_id) { inf.ids.add(String(it.series_id)); inf.seen.push(String(it.series_id)); }
-        });
-        inf.hasMore = (j.has_more !== false) && state.items.length > 0;
+        seedInf(state.items);
+        inf.hasMore = true;   // 首屏未带 offset，按还有更多处理
         inf.fetchPage = () => fetchBrowseMore(buildQuery);
-        renderFoot();
-        mountSentinel();
-      } catch (e) { box.innerHTML = ''; handleError(e); }
+        renderMoreCard();
+      } catch (e) { if (my === browseSeq) { box.innerHTML = ''; handleError(e); } }
     }
 
     /** 筛选浏览续页：带 offset 与已看 id。 */
@@ -737,8 +827,10 @@
       setStatus(`浏览 · ${state.items.length} 部`, 'ok');
     }
 
+    // 默认已选中「短剧」且排序为「最新」，打开页面就按该条件出结果，
+    // 不用再点「浏览」；筛选项与数据一起加载完成。
     await loadFilters('short_play');
-    setStatus('筛选就绪', 'ok');
+    await doBrowse();
   }
 
   // ---------- 播放器 ----------
@@ -1402,16 +1494,14 @@
       view.innerHTML = `<div class="section-head"><h2>搜索「${esc(q)}」</h2>
         <span class="muted" id="searchCount">${items.length} 个结果</span></div>
         ${items.length ? `<div class="grid" id="grid">${items.map(cardTemplate).join('')}</div>`
-          : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}
-        <div id="infFoot"></div>`;
+          : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}`;
       bindCards();
       setStatus(`搜索完成 · ${items.length} 个结果`, 'ok');
       resetInf(`search:${q}`);
-      state.items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
-      inf.hasMore = (j.has_more !== false) && items.length > 0;
+      seedInf(items);
       inf.fetchPage = () => fetchSearchMore(q);
-      renderFoot();
-      if (inf.hasMore) mountSentinel();
+      // 无结果时不挂卡片，网格也不存在
+      if (items.length) renderMoreCard();
     } catch (e) { handleError(e); }
   }
 
