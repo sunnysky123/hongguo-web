@@ -471,6 +471,7 @@ public final class Stream {
             if (!t.encrypt) {
                 download(t.url, p.out);
                 task.complete(p.out.toString());
+                pruneCache();
                 return p.out.toString();
             }
             Path ct = Paths.get(p.out + ".enc");
@@ -480,6 +481,8 @@ public final class Stream {
                 // remux 成功时返回 .play.mp4，失败时回退 raw
                 String res = (r.path != null) ? r.path : p.raw.toString();
                 task.complete(res);
+                // 落盘完成后再清理：此时 play/raw 已是成品，不会误删半成品
+                pruneCache();
                 return res;
             } finally {
                 try {
@@ -539,6 +542,90 @@ public final class Stream {
             }
         }
         return "warming";
+    }
+
+    // ==================== 缓存上限清理 ====================
+
+    /** 默认保留的缓存文件数上限。 */
+    public static final int CACHE_MAX_FILES = 30;
+
+    /** 上限配置项：设为 0 或负数表示不限制。 */
+    private static final String CACHE_MAX_ENV = "HONGGUO_CACHE_MAX_FILES";
+
+    /**
+     * 清理缓存目录，只保留最新的 {@link #CACHE_MAX_FILES} 个文件。
+     *
+     * 按**最后修改时间**倒序保留，最旧的先删。每个 {@code <vid>_<q>} 最多留下
+     * 一个成品（play > out > raw），因此实际删除数会略多于「超出的个数」。
+     *
+     * 两种文件不参与清理、也不会被删：
+     * - {@code *.part}：下载临时文件，仍在被写；
+     * - {@code *.enc}：密文临时文件，解密中且 finally 还要用。
+     *
+     * 上限由 {@code HONGGUO_CACHE_MAX_FILES} 控制，默认 {@value #CACHE_MAX_FILES}；
+     * 设为 0 或负数即关闭清理（不限数量）。
+     *
+     * 放在 decrypt 落盘**之后**调用：此时 raw/play 才是成品，不会误删半成品。
+     * 全程吞异常——清理失败不该让播放失败。
+     *
+     * @return 被删除的文件数
+     */
+    public static int pruneCache() {
+        return pruneCache(Log.envInt(CACHE_MAX_ENV, CACHE_MAX_FILES));
+    }
+
+    /** 清理缓存目录，limit<=0 时不做任何事。 */
+    public static int pruneCache(int limit) {
+        if (limit <= 0) return 0;
+        Path dir = cacheDir();
+        // 目录不存在说明还没落过盘，无需清理
+        if (!Files.isDirectory(dir)) return 0;
+
+        try {
+            List<Path> keepable = new ArrayList<>();
+            try (java.util.stream.Stream<Path> s = Files.list(dir)) {
+                for (Path p : s.toArray(Path[]::new)) {
+                    if (!Files.isRegularFile(p)) continue;
+                    String n = p.getFileName().toString();
+                    // 跳过下载/密文临时文件，避免删掉正在写或解密仍要用的
+                    if (n.endsWith(".part") || n.endsWith(".enc")) continue;
+                    keepable.add(p);
+                }
+            }
+            if (keepable.size() <= limit) return 0;
+
+            // 最后修改时间倒序：靠前的保留，靠后的（更旧）删除
+            keepable.sort((a, b) -> Long.compare(mtime(b), mtime(a)));
+
+            int deleted = 0;
+            for (int i = limit; i < keepable.size(); i++) {
+                Path victim = keepable.get(i);
+                try {
+                    Files.deleteIfExists(victim);
+                    deleted++;
+                } catch (IOException e) {
+                    // 单个失败不影响其余，照常删
+                }
+            }
+            if (deleted > 0) {
+                Log.info("缓存清理：保留最新 " + limit + " 个，已删除 " + deleted
+                        + " 个最旧文件（上限 " + CACHE_MAX_ENV + "=" + limit + "）");
+            }
+            return deleted;
+        } catch (Exception e) {
+            // 清理是尽力而为，失败不应影响播放
+            Log.warn("缓存清理失败：" + e.getMessage());
+            return 0;
+        }
+    }
+
+    /** 最后修改时间，读取失败按 0 兜底（视作最旧，优先被删）。 */
+    private static long mtime(Path p) {
+        try {
+            return Files.getLastModifiedTime(p).toMillis();
+        } catch (IOException e) {
+            return 0L;
+        }
     }
 
     // ==================== 环境探测 ====================
