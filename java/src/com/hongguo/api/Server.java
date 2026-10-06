@@ -302,21 +302,16 @@ public class Server {
             }
             String lim = q.get("limit");
             int searchOff = Integer.parseInt(q.getOrDefault("offset", "0"));
+            int searchLimit = lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim);
             Map<String, Object> m = Json.obj();
             m.put("query", query);
-            if (searchOff > 0) {
-                Client.Page pg = Client.searchPage(query,
-                        lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim), searchOff);
-                m.put("count", pg.items.size());
-                m.put("results", pg.items);
-                m.put("has_more", pg.hasMore);
-                m.put("next_offset", pg.nextSkip);
-            } else {
-                List<Object> results = Client.search(query,
-                        lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim));
-                m.put("count", results.size());
-                m.put("results", results);
-            }
+            // 首屏与续页走同一套逻辑，避免首屏拿不到 has_more 时前端只能乐观假设
+            // 「还有更多」，结果总数不足一页时要多点一次才知道到底。
+            Client.Page pg = Client.searchPage(query, searchLimit, searchOff);
+            m.put("count", pg.items.size());
+            m.put("results", pg.items);
+            m.put("has_more", pg.hasMore);
+            m.put("next_offset", pg.nextSkip);
             Res.json(ex, 200, m);
             return;
         }

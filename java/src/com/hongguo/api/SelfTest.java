@@ -799,6 +799,60 @@ final class SelfTest {
         }
     }
 
+    /**
+     * 18. 搜索分页切片（skip 必须真正生效）。
+     *
+     * 背景：searchPage 原先完全忽略 skip，每次都从上游第一页抓、返回同一批
+     * 前 limit 条。前端按 id 去重后第二页为空，于是永远显示"没有更多了"。
+     * 这里直接验证 Page.slice 的切片与 has_more 判据。
+     */
+    private void searchPageSlice() {
+        section("18. 搜索分页切片（skip 生效且 has_more 判据正确）");
+        java.util.List<Object> all = new java.util.ArrayList<>();
+        for (int i = 0; i < 75; i++) all.add("item" + i);
+
+        // 第 1 页：前 30 条
+        Client.Page p1 = Client.Page.slice(all, 0, 30, true);
+        check("首屏返回 30 条", p1.items.size() == 30, "" + p1.items.size());
+        check("首屏为第 0..29 条", "item0".equals(p1.items.get(0))
+                && "item29".equals(p1.items.get(29)), "");
+        check("首屏 nextSkip=30", p1.nextSkip == 30, "" + p1.nextSkip);
+        check("上游有后续时 has_more=true", p1.hasMore, "");
+
+        // 第 2 页：必须与第 1 页完全不重叠（这正是原 bug 的症状）
+        Client.Page p2 = Client.Page.slice(all, 30, 30, true);
+        check("续页返回 30 条", p2.items.size() == 30, "" + p2.items.size());
+        check("续页从 item30 开始", "item30".equals(p2.items.get(0)), "");
+        boolean overlap = false;
+        for (Object a : p1.items) for (Object b : p2.items) if (a.equals(b)) overlap = true;
+        check("续页与首页无重复条目", !overlap, overlap ? "存在重复" : "");
+        check("续页 nextSkip=60", p2.nextSkip == 60, "" + p2.nextSkip);
+        check("续页 has_more=true", p2.hasMore, "");
+
+        // 第 3 页：只剩 15 条
+        Client.Page p3 = Client.Page.slice(all, 60, 30, true);
+        check("第 3 页返回剩余 15 条", p3.items.size() == 15, "" + p3.items.size());
+        check("第 3 页从 item60 开始", "item60".equals(p3.items.get(0)), "");
+        check("末页 has_more=false（攒不满即到末尾）", !p3.hasMore, "");
+        check("末页 nextSkip=75", p3.nextSkip == 75, "" + p3.nextSkip);
+
+        // 上游报告没有后续时，即使凑满也要报 false
+        Client.Page p4 = Client.Page.slice(all, 0, 30, false);
+        check("上游 has_more=false 时不谎报有更多", !p4.hasMore, "");
+
+        // skip 超出实际条数：返回空、has_more=false，不能越界
+        Client.Page p5 = Client.Page.slice(all, 99, 30, true);
+        check("skip 越界返回空列表", p5.items.isEmpty(), "" + p5.items.size());
+        check("skip 越界 has_more=false", !p5.hasMore, "");
+
+        // 空输入不报错
+        Client.Page p6 = Client.Page.slice(new java.util.ArrayList<>(), 0, 30, true);
+        check("空结果返回空列表", p6.items.isEmpty(), "");
+        check("空结果 has_more=false", !p6.hasMore, "");
+        Client.Page p7 = Client.Page.slice(null, 0, 30, true);
+        check("null 结果不抛异常", p7.items.isEmpty() && !p7.hasMore, "");
+    }
+
     /** 统计目录下的成品文件数（排除 .part/.enc 临时文件）。 */
     private static int countCacheFiles(Path dir) throws Exception {
         final int[] n = {0};
@@ -854,6 +908,7 @@ final class SelfTest {
             t.streamingDecrypt();
             t.cacheBounds();
             t.streamCacheLimit();
+            t.searchPageSlice();
         } catch (Exception e) {
             t.failed++;
             System.out.println("  ✗ 自检异常中断：" + e);

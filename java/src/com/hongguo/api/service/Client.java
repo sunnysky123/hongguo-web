@@ -598,21 +598,28 @@ public final class Client {
     }
 
     /**
-     * 搜索的一页（供无限滚动）。
+     * 搜索的一页（供「加载更多」续页）。
      *
-     * search 接口的 passback/search_id 是上游游标，跨页必须原样回传，
-     * 否则每次都从第 1 页重查。这里把游标随分页一起推进。
+     * search 接口的 passback/search_id/offset 是上游游标，跨页必须原样回传，
+     * 否则每次都从第 1 页重查。
+     *
+     * skip 的语义是"调用方已展示的条数"：上游不支持直接跳到第 N 条，
+     * 只能从头抓够 skip + limit 条再丢掉前 skip 条。因此续页代价随页码增长，
+     * 但结果正确 —— 早先的实现完全忽略 skip、每次都返回同一批前 limit 条，
+     * 前端按 id 去重后得到空列表，于是误报"没有更多了"。
      */
     public static Page searchPage(String query, int maxItemsArg, int skip) throws Exception {
         int limit = Math.max(1, Math.min(
                 maxItemsArg > 0 ? maxItemsArg : Log.envInt("HG_SEARCH_MAX_ITEMS", 20), 40));
-        String ck = Safeguards.cacheKey("searchp", query, limit, skip);
+        int skipN = Math.max(0, skip);
+        // 游标状态可复用：同一关键词的续页从头重抓上游，靠这里的缓存兜住重复请求
+        String ck = Safeguards.cacheKey("searchp", query, limit, skipN);
         Object cached = Safeguards.cacheGet(ck);
         if (cached instanceof Object[]) {
             Object[] arr = (Object[]) cached;
             if (arr.length == 3 && arr[0] instanceof List) {
                 return new Page(castList(arr[0]), Boolean.TRUE.equals(arr[1]),
-                        Json.optInt(arr[2], skip));
+                        Json.optInt(arr[2], skipN));
             }
         }
 
@@ -623,7 +630,31 @@ public final class Client {
         String searchId = "";
         boolean hasMore = false;
 
-        for (int page = 0; page < 12; page++) {
+        // 续页要跳过前 skipN 条，只能从头多抓。为免每点一次「加载更多」就
+        // 把上游从头翻一遍，这里把已累积的结果与上游游标按关键词缓存起来，
+        // 后续续页从上次位置接着抓。缓存仅 10 分钟，避免结果集明显变化后仍给旧数据。
+        String ckAll = Safeguards.cacheKey("searchacc", query);
+        Object cachedAcc = Safeguards.cacheGet(ckAll);
+        if (cachedAcc instanceof Object[]) {
+            Object[] acc = (Object[]) cachedAcc;
+            if (acc.length == 6) {
+                results.addAll(castList(acc[0]));
+                for (Object o : castList(acc[1])) seen.add(String.valueOf(o));
+                offset = Json.optInt(acc[2], 0);
+                passback = Json.optStr(acc[3], "");
+                searchId = Json.optStr(acc[4], "");
+                hasMore = Boolean.TRUE.equals(acc[5]);
+            }
+        }
+
+        // 连续翻上游直到攒够要交付的那一页（skip 之后的 limit 条）
+        int want = skipN + limit;
+        // 上游每页 count=10 且要过滤掉无集数的条目，多留些轮次以免深翻页时凑不满
+        for (int page = 0; page < 60; page++) {
+            // 注意：hasMore 初值为 false，不能在首轮就用它判断退出，
+            // 否则第一页都抓不到（搜索恒返回 0 条）。首次无条件抓一轮。
+            if (results.size() >= want) break;
+            if (page > 0 && !hasMore) break;
             Map<String, Object> q = Json.obj();
             q.put("query", query);
             q.put("tab_name", "feed");
@@ -634,11 +665,19 @@ public final class Client {
             if (!passback.isEmpty()) q.put("passback", passback);
             if (!searchId.isEmpty()) q.put("search_id", searchId);
 
-            Map<String, Object> j = api("GET", "/reading/bookapi/search/tab/v", null, q, 1, true);
+            Map<String, Object> j;
+            try {
+                j = api("GET", "/reading/bookapi/search/tab/v", null, q, 1, true);
+            } catch (Exception e) {
+                // 翻页中途失败：保留已累积的部分，交由调用方判断 has_more，
+                // 不能把整个请求判死，否则续页永远无结果
+                if (results.isEmpty()) throw e;
+                break;
+            }
             List<Object> tabs = Json.optArr(j.get("search_tabs"));
-            if (tabs.isEmpty()) break;
+            if (tabs.isEmpty()) { hasMore = false; break; }
             Map<String, Object> tab = Json.optObj(tabs.get(0));
-            if (tab == null) break;
+            if (tab == null) { hasMore = false; break; }
             List<Object> data = Json.optArr(tab.get("data"));
             for (Object cell : data) {
                 Map<String, Object> item = parseSearchCell(cell);
@@ -659,13 +698,15 @@ public final class Client {
             hasMore = Json.optBool(tab.get("has_more"), false) && data.size() > 0;
             if (adv <= offset) hasMore = false;   // 游标原地不动 => 无后续
             offset = adv;
-            if (!hasMore || results.size() >= limit) break;
         }
 
-        List<Object> out = new ArrayList<>(results.subList(0, Math.min(limit, results.size())));
-        boolean more = hasMore && out.size() >= limit;   // 攒不满说明已到末尾
-        Safeguards.cacheSet(ck, new Object[]{out, more, skip + out.size()}, 600);
-        return new Page(out, more, skip + out.size());
+        Safeguards.cacheSet(ckAll, new Object[]{
+                new ArrayList<>(results), new ArrayList<>(seen), offset, passback, searchId, hasMore}, 600);
+
+        // 丢掉前 skipN 条，只交付之后的那一页（切片逻辑见 Page.slice）
+        Page page = Page.slice(results, skipN, limit, hasMore);
+        Safeguards.cacheSet(ck, new Object[]{page.items, page.hasMore, page.nextSkip}, 600);
+        return page;
     }
 
     @SuppressWarnings("unchecked")
@@ -1080,6 +1121,28 @@ public final class Client {
             this.items = items;
             this.hasMore = hasMore;
             this.nextSkip = nextSkip;
+        }
+
+        /**
+         * 从「已抓到的累积结果」里切出 [skip, skip+limit) 这一页。
+         *
+         * 上游不支持直接跳到第 N 条，续页只能从头多抓再丢掉前面的，
+         * 所以切片集中放在这里，便于自检直接验证（search 需真实签名服务）。
+         *
+         * has_more 的判据是"这一页确实凑满了 limit 条、且上游还有后续"。
+         * 攒不满即已到末尾，必须报 false —— 否则前端会一直显示「加载更多」，
+         * 点了却永远拿不到内容。
+         */
+        public static Page slice(List<Object> all, int skip, int limit, boolean upstreamHasMore) {
+            int skipN = Math.max(0, skip);
+            int lim = Math.max(1, limit);
+            int size = all == null ? 0 : all.size();
+            int from = Math.min(skipN, size);
+            int to = Math.min(skipN + lim, size);
+            List<Object> out = new ArrayList<>(all == null
+                    ? java.util.Collections.emptyList() : all.subList(from, to));
+            boolean more = out.size() >= lim && upstreamHasMore;
+            return new Page(out, more, skipN + out.size());
         }
     }
 
