@@ -51,8 +51,6 @@ public final class Crypto {
         }
     }
 
-    public static String md5Hex(byte[] data) { return hex(md5(data)); }
-
     /** MD5 大写十六进制，直接对应 Node 的 createHash('md5').update(d).digest('hex').toUpperCase()。 */
     public static String md5HexUpper(byte[] data) { return hexUpper(md5(data)); }
 
@@ -62,10 +60,6 @@ public final class Crypto {
 
     public static byte[] base64Decode(String s) {
         return Base64.getMimeDecoder().decode(s.trim());
-    }
-
-    public static String base64Encode(byte[] b) {
-        return Base64.getEncoder().encodeToString(b);
     }
 
     /**

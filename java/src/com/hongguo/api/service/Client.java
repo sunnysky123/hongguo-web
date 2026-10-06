@@ -183,8 +183,6 @@ public final class Client {
         FILTER_STATUS.put("连载", "creation_status_1");
     }
 
-    public static Map<String, String> filterCate() { return FILTER_CATE; }
-
     // ==================== 请求组装 ====================
 
     /** 组装完整 URL（含 base_query、设备身份、_rticket）。 */
@@ -1410,9 +1408,10 @@ public final class Client {
                 out.add(row);
                 if (out.size() >= maxItems) break;
             }
-            if (data != null && Boolean.FALSE.equals(data.get("has_more"))) break;
-            hasMore = data != null && !Boolean.FALSE.equals(data.get("has_more"));
-            if (!hasMore) break;
+            // 上方 items.isEmpty() 已拦截 data == null，此处 data 必非空。
+            // 上游只在下页无内容时才给出 has_more=false，故按其值决定是否继续。
+            if (Boolean.FALSE.equals(data.get("has_more"))) break;
+            hasMore = true;
             offset += items.size();
         }
         return new Page(out, hasMore, skip + out.size());
@@ -1424,13 +1423,5 @@ public final class Client {
     public static String sanitize(String name) {
         String t = name == null ? "" : name.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
         return t.length() > 60 ? t.substring(0, 60) : t;
-    }
-
-    /** 由封面 URL 推断扩展名。 */
-    public static String imgExt(String url) {
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile("\\.(jpe?g|png|webp|heic)(?:\\?|$)", java.util.regex.Pattern.CASE_INSENSITIVE)
-                .matcher(url == null ? "" : url);
-        return m.find() ? "." + m.group(1).toLowerCase() : ".jpg";
     }
 }

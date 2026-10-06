@@ -186,6 +186,4 @@ public final class Spade {
         Log.info("spade 解包自检：" + ok + "/" + TRUTH.length + (pass ? " 全部通过" : "存在失败"));
         return pass;
     }
-
-    public static int truthCount() { return TRUTH.length; }
 }

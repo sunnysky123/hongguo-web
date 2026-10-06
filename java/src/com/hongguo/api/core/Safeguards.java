@@ -11,7 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 风控与稳定性辅助：内存缓存、节流、风控识别、设备身份池。
@@ -132,7 +131,7 @@ public final class Safeguards {
     /** 缓存写入。ttl 单位为秒，<=0 表示不缓存。 */
     public static void cacheSet(String key, Object val, long ttlSec) {
         if (ttlSec <= 0) return;
-        long expire = ttlSec > 0 ? System.currentTimeMillis() + ttlSec * 1000L : 0;
+        long expire = System.currentTimeMillis() + ttlSec * 1000L;
         Entry e = new Entry(val, expire, weigh(val));
         Entry old;
         synchronized (MEM) {

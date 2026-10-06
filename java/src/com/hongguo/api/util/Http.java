@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URLConnection;
 import java.net.URLEncoder;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -106,14 +107,16 @@ public final class Http {
     }
 
     private static HttpURLConnection open(String url, boolean follow) throws IOException {
-        // 统一走 HttpURLConnection：项目所有请求都是 http/https，
-        // 强转安全；这样调用方可直接使用 setRequestMethod 等实例方法。
-        HttpURLConnection c = (HttpURLConnection) URI.create(url).toURL().openConnection();
-        c.setInstanceFollowRedirects(follow);
-        if (!(c instanceof HttpURLConnection)) {
-            throw new IOException("仅支持 http/https，当前协议不支持");
+        // 统一走 HttpURLConnection：项目所有请求都是 http/https。
+        // 协议校验必须在强转之前做——强转后 instanceof 恒真，等于没有校验，
+        // 非 http/https 的地址会在这里抛 ClassCastException 而非可读的提示。
+        URLConnection raw = URI.create(url).toURL().openConnection();
+        if (!(raw instanceof HttpURLConnection)) {
+            throw new IOException("仅支持 http/https，当前协议不支持：" + url);
         }
-        return (HttpURLConnection) c;
+        HttpURLConnection c = (HttpURLConnection) raw;
+        c.setInstanceFollowRedirects(follow);
+        return c;
     }
 
     private static byte[] readAll(InputStream is) throws IOException {
@@ -127,18 +130,6 @@ public final class Http {
             }
             return bos.toByteArray();
         }
-    }
-
-    /** 读JSON（失败抛 IOException，附带状态码与响应片段便于诊断）。 */
-    public static Resp sendJson(Req req) throws IOException {
-        req.headers.putIfAbsent("Content-Type", "application/json; charset=utf-8");
-        Resp r = send(req);
-        if (!r.ok()) {
-            String snippet = r.text();
-            if (snippet.length() > 200) snippet = snippet.substring(0, 200) + "...";
-            throw new IOException("HTTP " + r.status + " " + (r.text().isEmpty() ? "" : snippet));
-        }
-        return r;
     }
 
     // ==================== 工具 ====================

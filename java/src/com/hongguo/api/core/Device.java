@@ -3,7 +3,6 @@ package com.hongguo.api.core;
 import com.hongguo.api.util.Json;
 import com.hongguo.api.util.Log;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -150,13 +149,5 @@ public final class Device {
         out.put("note", "本机稳定设备标识；删除此文件会重新生成并可能触发上游风控");
         writeStore(out);
         return new Identity(id, "generated");
-    }
-
-    /** 当前生效的 device_id（不修改任何配置）。 */
-    public static String currentDeviceId() {
-        String fromEnv = Log.env("HONGGUO_DEVICE_ID",
-                Log.env("HG_DEVICE_ID", "")).trim();
-        if (isValidId(fromEnv)) return fromEnv;
-        return Json.optStr(readStore().get("device_id"), "").trim();
     }
 }

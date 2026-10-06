@@ -2,7 +2,6 @@ package com.hongguo.api.service;
 
 import com.hongguo.api.core.Mp4;
 import com.hongguo.api.core.Spade;
-import com.hongguo.api.util.Http;
 import com.hongguo.api.util.Json;
 import com.hongguo.api.util.Log;
 
@@ -18,7 +17,6 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -46,8 +44,6 @@ public final class Stream {
         // 转绝对路径：/download 会把落盘路径回给调用方，相对路径不便定位文件
         return base.resolve("stream-cache").toAbsolutePath();
     }
-
-    public static Path CACHE_DIR() { return cacheDir(); }
 
     /** 同键并发去重：同一集并发请求只解密一次。 */
     private static final Map<String, CompletableTask> INFLIGHT = new ConcurrentHashMap<>();

@@ -97,7 +97,6 @@ final class Mp4Fixture {
     }
 
     /** 构造样本数据：2 个样本。 */
-    private static final int SAMPLE_SIZE = 16;
     private static final int SAMPLE_COUNT = 2;
 
     /**

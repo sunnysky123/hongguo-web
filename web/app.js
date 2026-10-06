@@ -212,13 +212,10 @@
    *   2) KEY_401_MIN_GAP：两次自愈之间至少隔这么久。不设的话「取密钥成功但
    *      业务接口仍 401」会在几百毫秒内跑满 5 次 —— 而真实后端重启后签名服务
    *      预热要好几秒，那属于正常启动过程，不该被判成死循环。
-   *   3) KEY_401_WINDOW：计数只在时间窗内累积，跨窗的零星 401 属于不同故障。
    */
-  const KEY_401_MAX = 5;         // 窗口内累计 401 达到该次数才熔断
-  const KEY_401_WINDOW = 30000;  // 计数窗口（毫秒）
+  const KEY_401_MAX = 5;         // 累计 401 达到该次数才熔断
   const KEY_401_MIN_GAP = 2000;  // 两次自愈之间的最小间隔（毫秒）
-  let key401Count = 0;           // 窗口内累计 401 次数
-  let key401At = 0;              // 最近一次计入的 401 时间戳
+  let key401Count = 0;           // 累计 401 次数
   let key401TriedAt = 0;         // 最近一次真正发起自愈的时间戳
   let key401Pending = false;     // 是否已在自愈流程中
   let key401Timer = null;        // 间隔不足时的延迟重试定时器
@@ -344,15 +341,6 @@
     return `<span class="seen" title="点击继续播放第 ${ep} 集">看到第 ${ep} 集</span>`;
   }
 
-  function renderGrid(items) {
-    if (!items || !items.length) {
-      view.innerHTML = '<div class="empty"><span class="big">🍿</span>没有内容</div>';
-      return;
-    }
-    view.innerHTML = `<div class="grid">${items.map(cardTemplate).join('')}</div>`;
-    bindCards();
-  }
-
   function bindCards() {
     view.querySelectorAll('.card').forEach((el) => {
       el.addEventListener('click', () => {
@@ -368,7 +356,7 @@
   }
 
   // ---------- 页面状态 ----------
-  const state = { tab: 'home', offset: 0, busy: false, items: [] };
+  const state = { tab: 'home', items: [] };
 
   // ---------- 分页加载 ----------
   // 每个 tab 的分页上下文：记录已加载的 id、下一页偏移、上游是否还有。
@@ -379,7 +367,6 @@
   // 哨兵 + IntersectionObserver 在实际使用中不触发（滚动容器识别不可靠），
   // 显式按钮更可控，也能让用户明确知道还有更多内容。
   const inf = {
-    key: null,        // 当前上下文的标识，切tab/改筛选条件时重置
     offset: 0,
     hasMore: true,
     loading: false,
@@ -388,8 +375,7 @@
   };
 
   /** 重置分页上下文（切换 tab 或改变查询条件时调用）。 */
-  function resetInf(key) {
-    inf.key = key;
+  function resetInf() {
     inf.offset = 0;
     inf.hasMore = true;
     inf.seen = [];
@@ -522,7 +508,6 @@
 
   async function loadTab(tab) {
     state.tab = tab;
-    state.offset = 0;
     state.items = [];
     document.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === tab);
@@ -591,7 +576,7 @@
     setStatus(`${title || '榜单'} · ${state.items.length} 部`, 'ok');
     // 首屏请求不带 offset，拿不到 has_more：统一按「还有更多」处理，
     // 点一次加载后服务端才会给出真实的 has_more
-    resetInf(`rank:${board}`);
+    resetInf();
     seedInf(state.items);
     inf.fetchPage = () => fetchRankMore(board, title);
     renderMoreCard();
@@ -641,7 +626,7 @@
     });
     bindCards();
     setStatus(`${j.name || ''} ${j.mode || ''} · ${state.items.length} 部`, 'ok');
-    resetInf(`latest:${genre}:${onlyToday}`);
+    resetInf();
     seedInf(state.items);
     inf.fetchPage = () => fetchLatestMore(genre, onlyToday);
     renderMoreCard();
@@ -809,7 +794,7 @@
         box.innerHTML = state.items.map(cardTemplate).join('');
         bindCards();
         setStatus(`浏览 · ${state.items.length} 部`, 'ok');
-        resetInf(`browse:${JSON.stringify(sel)}`);
+        resetInf();
         seedInf(state.items);
         inf.hasMore = true;   // 首屏未带 offset，按还有更多处理
         inf.fetchPage = () => fetchBrowseMore(buildQuery);
@@ -839,7 +824,7 @@
 
   // 当前播放上下文：剧集列表 + 正在播的下标，供自动连播使用
   const ctx = {
-    seriesId: '', title: '', abstract: '', episodes: [], index: -1,
+    seriesId: '', title: '', episodes: [], index: -1,
     cover: '', total: 0, // cover/total 供历史与收藏列表展示
     // 「本次打开该剧后的首次起播」标记，供 recordHistory 判断是否刷新历史时间戳。
     // 由 openSeries 置 true，playAt 消费后置回 false。
@@ -897,7 +882,6 @@
     const btn = $('pInfoBtn');
     const pop = $('pInfoPop');
     const t = String(text || '').trim();
-    ctx.abstract = t;
     if (!t) { btn.hidden = true; pop.hidden = true; return; }
     // 气泡里按纯文本渲染，避免简介中的尖括号破坏 DOM
     pop.textContent = t;
@@ -918,8 +902,8 @@
    * @param {string} title 卡片上的剧名（接口失败时兜底用）
    * @param {object} opts
    *   - startAt 起始集序号（0 起）。历史/收藏「继续播放」传它。
-   *   - resume  是否为「从历史/收藏列表恢复」。为 true 时强制用 startAt，
-   *              不再套用「接着上次播」逻辑（避免与列表记录互相覆盖）。
+   *     它在 resolveStart 里优先级最高，会盖掉「接着上次播」的推断，
+   *     因此从历史/收藏恢复时不需要额外的开关参数。
    */
   async function openSeries(seriesId, title, opts = {}) {
     setStatus('获取剧集…');
@@ -1367,7 +1351,7 @@
       return;
     }
     const item = LIB.read(libKind).find((x) => x.sid === sid);
-    openSeries(sid, item ? item.title : '', { startAt: idx, resume: true });
+    openSeries(sid, item ? item.title : '', { startAt: idx });
   }
 
   $('histBtn').addEventListener('click', () => openLib('history'));
@@ -1497,7 +1481,7 @@
           : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}`;
       bindCards();
       setStatus(`搜索完成 · ${items.length} 个结果`, 'ok');
-      resetInf(`search:${q}`);
+      resetInf();
       seedInf(items);
       inf.fetchPage = () => fetchSearchMore(q);
       // 无结果时不挂卡片，网格也不存在
@@ -1537,7 +1521,7 @@
    * 卡片反复开关、接口反复打，用户完全没法操作。所以这里有熔断 + 最小间隔。
    */
   function handle401() {
-    // 自愈已在进行中时不重复发起：loadTab/renderGrid 等会并发打多个接口，
+    // 自愈已在进行中时不重复发起：loadTab 等会并发打多个接口，
     // 它们几乎同时 401，不去重的话一次故障就把计数打满，直接误熔断。
     if (key401Pending) return;
 

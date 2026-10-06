@@ -305,8 +305,6 @@ body {
 }
 .empty .big { font-size: 40px; display: block; margin-bottom: 10px; }
 
-.load-more { display: grid; place-items: center; padding: 26px 0; }
-
 /* 「加载更多」卡片：grid 的最后一个子元素，点击加载下一页 */
 .more-card {
   cursor: pointer;
