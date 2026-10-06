@@ -301,12 +301,22 @@ public class Server {
                 return;
             }
             String lim = q.get("limit");
-            List<Object> results = Client.search(query,
-                    lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim));
+            int searchOff = Integer.parseInt(q.getOrDefault("offset", "0"));
             Map<String, Object> m = Json.obj();
             m.put("query", query);
-            m.put("count", results.size());
-            m.put("results", results);
+            if (searchOff > 0) {
+                Client.Page pg = Client.searchPage(query,
+                        lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim), searchOff);
+                m.put("count", pg.items.size());
+                m.put("results", pg.items);
+                m.put("has_more", pg.hasMore);
+                m.put("next_offset", pg.nextSkip);
+            } else {
+                List<Object> results = Client.search(query,
+                        lim == null || lim.isEmpty() ? 0 : Integer.parseInt(lim));
+                m.put("count", results.size());
+                m.put("results", results);
+            }
             Res.json(ex, 200, m);
             return;
         }
@@ -318,11 +328,19 @@ public class Server {
                 Res.fail(ex, 400, "board 必须是 " + String.join("|", Client.RANK_BOARDS.keySet()));
                 return;
             }
-            List<Object> items = Client.rank(board, limit);
+            // offset>0 走分页路径（供无限滚动）；缺省保持原行为，首屏不受影响
+            int offset = Integer.parseInt(q.getOrDefault("offset", "0"));
             Map<String, Object> m = Json.obj();
             m.put("board", board);
             m.put("name", Client.RANK_NAMES.get(board));
-            m.put("items", items);
+            if (offset > 0) {
+                Client.RankPage pg = Client.rankPage(board, limit, offset);
+                m.put("items", pg.items);
+                m.put("has_more", pg.hasMore);
+                m.put("next_offset", pg.nextOffset);
+            } else {
+                m.put("items", Client.rank(board, limit));
+            }
             Res.json(ex, 200, m);
             return;
         }
@@ -336,7 +354,6 @@ public class Server {
             boolean onlyToday = !"false".equals(q.get("only_today"));
             int limit = Integer.parseInt(q.getOrDefault("limit", "120"));
             boolean refresh = "true".equals(q.get("refresh")) || "true".equals(q.get("no_cache"));
-            List<Object> items = Client.latest(genre, onlyToday, limit, refresh);
             String mode = genre.equals("short_play")
                     ? (onlyToday ? "今日上新" : "最新上架")
                     : "7天内上新·最新上架";
@@ -345,8 +362,25 @@ public class Server {
             m.put("name", Client.GENRE_NAMES.get(genre));
             m.put("mode", mode);
             m.put("only_today", onlyToday);
-            m.put("count", items.size());
-            m.put("items", items);
+            // offset>0 或带seen 走分页路径；前端把已看过的 series_id 以逗号串回传，
+            // 上游据此去重，因此续页内容不会与前面重复
+            int offset = Integer.parseInt(q.getOrDefault("offset", "0"));
+            String seenRaw = q.get("seen");
+            List<String> seen = null;
+            if (seenRaw != null && !seenRaw.isEmpty()) {
+                seen = new ArrayList<>(java.util.Arrays.asList(seenRaw.split(",")));
+            }
+            if (offset > 0 || seen != null) {
+                Client.Page pg = Client.latestPage(genre, onlyToday, limit, refresh, seen, offset);
+                m.put("count", pg.items.size());
+                m.put("items", pg.items);
+                m.put("has_more", pg.hasMore);
+                m.put("next_offset", pg.nextSkip);
+            } else {
+                List<Object> items = Client.latest(genre, onlyToday, limit, refresh);
+                m.put("count", items.size());
+                m.put("items", items);
+            }
             Res.json(ex, 200, m);
             return;
         }
@@ -377,7 +411,20 @@ public class Server {
                     "gender", "days", "status", "limit"}) {
                 if (q.containsKey(k)) opts.put(k, q.get(k));
             }
-            List<Object> items = Client.browse(genre, opts);
+            List<Object> items;
+            boolean hasMore = false;
+            int nextOffset = 0;
+            int offset = Integer.parseInt(q.getOrDefault("offset", "0"));
+            String seenRaw = q.get("seen");
+            if (offset > 0 || (seenRaw != null && !seenRaw.isEmpty())) {
+                List<String> seen = new ArrayList<>(java.util.Arrays.asList(seenRaw.split(",")));
+                Client.Page pg = Client.browsePage(genre, opts, seen, offset);
+                items = pg.items;
+                hasMore = pg.hasMore;
+                nextOffset = pg.nextSkip;
+            } else {
+                items = Client.browse(genre, opts);
+            }
             // 补上播放与剧集入口
             for (Object itObj : items) {
                 Map<String, Object> it = Json.optObj(itObj);
@@ -393,6 +440,10 @@ public class Server {
             m.put("name", Client.GENRE_NAMES.get(genre));
             m.put("count", items.size());
             m.put("items", items);
+            if (hasMore || nextOffset > 0) {
+                m.put("has_more", hasMore);
+                m.put("next_offset", nextOffset);
+            }
             Res.json(ex, 200, m);
             return;
         }

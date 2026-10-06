@@ -307,6 +307,19 @@ body {
 
 .load-more { display: grid; place-items: center; padding: 26px 0; }
 
+/* 无限滚动：底部「已到底」提示与哨兵 */
+#infFoot { min-height: 1px; }
+#infFoot .loading { padding: 26px 0; }
+.end-tip {
+  padding: 26px 0 34px;
+  text-align: center;
+  color: var(--fg-mute);
+  font-size: 13px;
+  opacity: .75;
+}
+/* 哨兵不可见但保持在文档流中，IntersectionObserver 才能正确判定触底 */
+#infSentinel { height: 1px; }
+
 /* ---------- 状态栏 ---------- */
 .statusbar {
   position: sticky;

@@ -594,17 +594,34 @@ public final class Client {
      * 直到 has_more=false 或达到 max_items / 12 页安全上限。
      */
     public static List<Object> search(String query, int maxItemsArg) throws Exception {
+        return searchPage(query, maxItemsArg, 0).items;
+    }
+
+    /**
+     * 搜索的一页（供无限滚动）。
+     *
+     * search 接口的 passback/search_id 是上游游标，跨页必须原样回传，
+     * 否则每次都从第 1 页重查。这里把游标随分页一起推进。
+     */
+    public static Page searchPage(String query, int maxItemsArg, int skip) throws Exception {
         int limit = Math.max(1, Math.min(
                 maxItemsArg > 0 ? maxItemsArg : Log.envInt("HG_SEARCH_MAX_ITEMS", 20), 40));
-        String ck = Safeguards.cacheKey("search", query, limit);
+        String ck = Safeguards.cacheKey("searchp", query, limit, skip);
         Object cached = Safeguards.cacheGet(ck);
-        if (cached != null) return castList(cached);
+        if (cached instanceof Object[]) {
+            Object[] arr = (Object[]) cached;
+            if (arr.length == 3 && arr[0] instanceof List) {
+                return new Page(castList(arr[0]), Boolean.TRUE.equals(arr[1]),
+                        Json.optInt(arr[2], skip));
+            }
+        }
 
         List<Object> results = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
         int offset = 0;
         String passback = "";
         String searchId = "";
+        boolean hasMore = false;
 
         for (int page = 0; page < 12; page++) {
             Map<String, Object> q = Json.obj();
@@ -631,18 +648,24 @@ public final class Client {
                 seen.add(isid);
                 results.add(item);
             }
-            if (tab.get("next_offset") != null) offset = Json.optInt(tab.get("next_offset"), offset);
+            // 游标先落定，供下一页使用
+            int adv = tab.get("next_offset") != null
+                    ? Json.optInt(tab.get("next_offset"), offset + data.size())
+                    : offset + data.size();
             String pb = str(tab, "passback");
             if (!pb.isEmpty()) passback = pb;
             String sid = str(tab, "search_id");
             if (!sid.isEmpty()) searchId = sid;
-            if (!Json.optBool(tab.get("has_more"), false) || data.isEmpty()
-                    || results.size() >= limit) break;
+            hasMore = Json.optBool(tab.get("has_more"), false) && data.size() > 0;
+            if (adv <= offset) hasMore = false;   // 游标原地不动 => 无后续
+            offset = adv;
+            if (!hasMore || results.size() >= limit) break;
         }
 
         List<Object> out = new ArrayList<>(results.subList(0, Math.min(limit, results.size())));
-        Safeguards.cacheSet(ck, out, 600);
-        return out;
+        boolean more = hasMore && out.size() >= limit;   // 攒不满说明已到末尾
+        Safeguards.cacheSet(ck, new Object[]{out, more, skip + out.size()}, 600);
+        return new Page(out, more, skip + out.size());
     }
 
     @SuppressWarnings("unchecked")
@@ -922,16 +945,57 @@ public final class Client {
 
     /** 取漫剧榜单。board: recommend / hot / new。 */
     public static List<Object> rank(String board, int limit) throws Exception {
-        String ck = Safeguards.cacheKey("rank", board, limit);
+        RankPage p = rankPage(board, limit, 0);
+        return p.items;
+    }
+
+    /**
+     * 榜单分页结果（供前端无限滚动）。
+     *
+     * @param items 本页条目
+     * @param hasMore 上游是否还有后续页
+     * @param nextOffset 下一页应使用的偏移量
+     */
+    public static final class RankPage {
+        public final List<Object> items;
+        public final boolean hasMore;
+        public final int nextOffset;
+
+        RankPage(List<Object> items, boolean hasMore, int nextOffset) {
+            this.items = items;
+            this.hasMore = hasMore;
+            this.nextOffset = nextOffset;
+        }
+    }
+
+    /**
+     * 取漫剧榜单的一页。
+     *
+     * offset 为 0 时行为与从前一致（从头累积抓够 limit 条）；offset>0 时只抓
+     * 本页，不会从头重复遍历 —— 无限滚动必须走这条路径，否则每次触底都会把
+     * 前面的页重跑一遍。
+     */
+    public static RankPage rankPage(String board, int limit, int offsetArg) throws Exception {
+        int limit1 = Math.max(1, Math.min(limit <= 0 ? 30 : limit, 100));
+        int offset = Math.max(0, offsetArg);
+        // 分页视图按offset 缓存，避免相邻页互相覆盖
+        String ck = Safeguards.cacheKey("rankp", board, limit1, offset);
         Object cached = Safeguards.cacheGet(ck);
-        if (cached != null) return castList(cached);
+        if (cached instanceof Object[]) {
+            Object[] arr = (Object[]) cached;
+            if (arr.length == 3 && arr[0] instanceof List) {
+                return new RankPage(castList(arr[0]), Boolean.TRUE.equals(arr[1]),
+                        Json.optInt(arr[2], offset));
+            }
+        }
 
         String sub = RANK_BOARDS.getOrDefault(board, board);
         List<Object> results = new ArrayList<>();
-        int offset = 0;
+        int cur = offset;
         String sessionUuid = UUID.randomUUID().toString();
+        boolean hasMore = false;
 
-        while (results.size() < limit) {
+        while (results.size() < limit1) {
             Map<String, Object> q = Json.obj();
             q.put("cell_id", COMIC_RANK_CELL);
             q.put("tab_type", "26");
@@ -941,7 +1005,7 @@ public final class Client {
             q.put("selected_items", "comic_series_rank");
             q.put("sub_selected_items", sub);
             q.put("session_uuid", sessionUuid);
-            if (offset != 0) q.put("offset", String.valueOf(offset));
+            if (cur != 0) q.put("offset", String.valueOf(cur));
 
             Map<String, Object> j = api("GET", "/reading/bookapi/bookmall/cell/change/v",
                     null, q, 3, SIGN_LIST);
@@ -965,7 +1029,8 @@ public final class Client {
                 if (sid == null) continue;
 
                 Map<String, Object> row = Json.obj();
-                row.put("rank", results.size() + 1);
+                // 分页时 rank 接着上一页排，避免每页都从 1 开始
+                row.put("rank", offset + results.size() + 1);
                 row.put("series_id", String.valueOf(sid));
                 row.put("title", str(v, "title"));
                 row.put("episode_cnt", num(v, "episode_cnt"));
@@ -978,14 +1043,21 @@ public final class Client {
                 row.put("abstract", strip(str(v, "video_desc"), 50));
                 results.add(row);
             }
-            if (cv == null || !Json.optBool(cv.get("has_more"), false)) break;
-            offset = cv.get("next_offset") != null
-                    ? Json.optInt(cv.get("next_offset"), offset) : offset + cells.size();
+            hasMore = cv != null && Json.optBool(cv.get("has_more"), false);
+            int adv = cv != null && cv.get("next_offset") != null
+                    ? Json.optInt(cv.get("next_offset"), cur + cells.size())
+                    : cur + cells.size();
+            // 游标没前进说明上游在原地打转，再翻下去会无限重复同一页
+            if (adv <= cur) { hasMore = false; break; }
+            cur = adv;
+            if (!hasMore) break;
         }
 
-        List<Object> out = new ArrayList<>(results.subList(0, Math.min(limit, results.size())));
-        Safeguards.cacheSet(ck, out, 1800);
-        return out;
+        List<Object> out = new ArrayList<>(results.subList(0, Math.min(limit1, results.size())));
+        // 结果放满说明可能还有后续页；否则上游已明确没有
+        boolean more = hasMore && out.size() >= limit1;
+        Safeguards.cacheSet(ck, new Object[]{out, more, cur}, 1800);
+        return new RankPage(out, more, cur);
     }
 
     /**
@@ -995,6 +1067,30 @@ public final class Client {
      */
     public static List<Object> latest(String genre, boolean onlyToday, int maxItems, boolean refresh)
             throws Exception {
+        return latestPage(genre, onlyToday, maxItems, refresh, null, 0).items;
+    }
+
+    /** 分页结果（通用）。 */
+    public static final class Page {
+        public final List<Object> items;
+        public final boolean hasMore;
+        public final int nextSkip;
+
+        Page(List<Object> items, boolean hasMore, int nextSkip) {
+            this.items = items;
+            this.hasMore = hasMore;
+            this.nextSkip = nextSkip;
+        }
+    }
+
+    /**
+     * 最新上架的一页（供无限滚动）。
+     *
+     * @param seenIds 已经展示过的 series_id。landpage 接口靠 filter_ids 去重，
+     *                把已看过的 id 原样回传即可拿到后续内容且不与前面重复。
+     */
+    public static Page latestPage(String genre, boolean onlyToday, int maxItems, boolean refresh,
+                                  List<String> seenIds, int skip) throws Exception {
         String[] gv = GENRES.get(genre);
         if (gv == null) throw new IllegalArgumentException("genre 必须是 "
                 + String.join("|", GENRES.keySet()));
@@ -1007,14 +1103,21 @@ public final class Client {
 
         String ck = Safeguards.cacheKey("latest", genre, String.valueOf(onlyToday),
                 String.valueOf(maxItems));
-        if (!refresh) {
+        // 分页请求（skip>0 或带了已看列表）不进整页缓存：整页缓存是给
+        // 首屏用的，带去重状态的中间页缓存起来既易失效又会占内存
+        boolean paged = skip > 0 || (seenIds != null && !seenIds.isEmpty());
+        if (!refresh && !paged) {
             Object c = Safeguards.cacheGet(ck);
-            if (c != null) return castList(c);
+            if (c != null) return new Page(castList(c), true, 0);
         }
 
         List<Object> out = new ArrayList<>();
-        List<String> shown = new ArrayList<>();
-        int offset = 0;
+        // 已看过的 id 沿用上游去重参数，续页才不会重复返回同一批
+        List<String> shown = new ArrayList<>(seenIds != null ? seenIds : new ArrayList<>());
+        // 关键：offset 必须从已展示条数起步，否则上游每次都回第一页，
+        // 前端表现为「续页内容与首页完全相同」
+        int offset = Math.max(0, skip);
+        boolean hasMore = false;
 
         for (int pages = 0; pages < 20 && out.size() < maxItems; pages++) {
             Map<String, Object> body = landpageBody(shown, scene, offset, 18, onlineTime, g);
@@ -1069,11 +1172,14 @@ public final class Client {
                 if (out.size() >= maxItems) break;
             }
             if (wantToday && pageToday == 0) break; // 整页无今日 => 已过今日簇
-            if (data != null && Boolean.FALSE.equals(data.get("has_more"))) break;
+            hasMore = data != null && !Boolean.FALSE.equals(data.get("has_more"));
+            if (!hasMore) break;
             offset += items.size();
         }
-        Safeguards.cacheSet(ck, out, 600);
-        return out;
+        if (out.size() >= maxItems && out.size() > skip) {
+            Safeguards.cacheSet(ck, out, 600);
+        }
+        return new Page(out, hasMore, skip + out.size());
     }
 
     /** landpage 接口请求体。 */
@@ -1166,6 +1272,16 @@ public final class Client {
 
     /** 按筛选条件浏览。 */
     public static List<Object> browse(String genre, Map<String, String> opts) throws Exception {
+        return browsePage(genre, opts, null, 0).items;
+    }
+
+    /**
+     * 筛选浏览的一页（供无限滚动）。
+     *
+     * @param seenIds 已展示过的 series_id，经 filter_ids 回传给上游做去重。
+     */
+    public static Page browsePage(String genre, Map<String, String> opts,
+                                  List<String> seenIds, int skip) throws Exception {
         String[] gv = GENRES.get(genre);
         if (gv == null) throw new IllegalArgumentException("genre 必须是 "
                 + String.join("|", GENRES.keySet()));
@@ -1184,8 +1300,10 @@ public final class Client {
         select.put("online_time", toIds(opts.get("days"), FILTER_DAYS));
 
         List<Object> out = new ArrayList<>();
-        List<String> shown = new ArrayList<>();
-        int offset = 0;
+        List<String> shown = new ArrayList<>(seenIds != null ? seenIds : new ArrayList<>());
+        // 与 latestPage 同理：offset 必须从已展示条数起步
+        int offset = Math.max(0, skip);
+        boolean hasMore = false;
 
         for (int pages = 0; pages < 20 && out.size() < maxItems; pages++) {
             Map<String, Object> body = Json.obj();
@@ -1230,9 +1348,11 @@ public final class Client {
                 if (out.size() >= maxItems) break;
             }
             if (data != null && Boolean.FALSE.equals(data.get("has_more"))) break;
+            hasMore = data != null && !Boolean.FALSE.equals(data.get("has_more"));
+            if (!hasMore) break;
             offset += items.size();
         }
-        return out;
+        return new Page(out, hasMore, skip + out.size());
     }
 
     // ==================== 工具 ====================
