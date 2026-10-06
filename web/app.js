@@ -370,10 +370,123 @@
   // ---------- 页面状态 ----------
   const state = { tab: 'home', offset: 0, busy: false, items: [] };
 
+  // ---------- 无限滚动 ----------
+  // 每个 tab 的分页上下文：记录已加载的 id、下一页偏移、上游是否还有。
+  // offset 语义各接口不同：rank 用上游 next_offset，latest/browse 用已加载条数，
+  // search 用已加载条数（配合 seen 回传去重）。
+  const inf = {
+    key: null,        // 当前上下文的标识，切tab/改筛选条件时置 null 以重置
+    offset: 0,
+    hasMore: true,
+    loading: false,
+    seen: [],         // 已展示的 series_id，续页时回传给上游去重
+    ids: new Set(),   // 本地兜底去重
+    loader: null,     // IntersectionObserver
+  };
+
+  /** 重置分页上下文（切换 tab 或改变查询条件时调用）。 */
+  function resetInf(key) {
+    inf.key = key;
+    inf.offset = 0;
+    inf.hasMore = true;
+    inf.seen = [];
+    inf.ids = new Set();
+    teardownInf();
+  }
+
+  function teardownInf() {
+    if (inf.loader) { inf.loader.disconnect(); inf.loader = null; }
+  }
+
+  /** 累计已见 id 的逗号串，用于/seen 参数。 */
+  function seenParam() {
+    // 上游 filter_ids 越长请求体越大，只回传最近一段即可覆盖翻页重叠区
+    const tail = inf.seen.slice(-120);
+    return tail.join(',');
+  }
+
+  /**
+   * 渲染底部状态并挂载触底观察器。
+   * 用哨兵元素 + IntersectionObserver，而不是 scroll 事件：
+   * 后者需要节流且在移动端易抖动，哨兵方式更稳且不占主线程。
+   */
+  function mountSentinel() {
+    teardownInf();
+    const el = document.getElementById('infSentinel');
+    if (!el) return;
+    inf.loader = new IntersectionObserver((entries) => {
+      if (entries.some(e => e.isIntersecting)) {
+        loadMore();
+      }
+    }, { rootMargin: '300px 0px' });
+    inf.loader.observe(el);
+  }
+
+  /** 追加一页：infinite=true 时由各 tab 提供 fetchPage 实现。 */
+  async function loadMore() {
+    if (inf.loading || !inf.hasMore) return;
+    const fn = inf.fetchPage;
+    if (typeof fn !== 'function') return;
+    inf.loading = true;
+    renderFoot('loading');
+    try {
+      await fn();
+    } catch (e) {
+      handleError(e);
+      inf.hasMore = false;
+    } finally {
+      inf.loading = false;
+      renderFoot();
+    }
+  }
+
+  /** 更新底部提示：加载中/ 已到底 / 可继续下滑。 */
+  function renderFoot(mode) {
+    const el = document.getElementById('infFoot');
+    if (!el) return;
+    if (mode === 'loading') {
+      el.innerHTML = '<div class="loading">加载中…</div>';
+      return;
+    }
+    if (!inf.hasMore) {
+      el.innerHTML = '<div class="end-tip">— 已经到底了 —</div>';
+      return;
+    }
+    el.innerHTML = '<div id="infSentinel"></div>';
+  }
+
+  /** 把新一页追加到现有 grid（不整体重绘，避免闪烁与滚动位置跳动）。 */
+  function appendCards(items, gridSel) {
+    const grid = $(gridSel || 'grid');
+    if (!grid) return;
+    grid.insertAdjacentHTML('beforeend', items.map(cardTemplate).join(''));
+    bindCards();
+    inf.seen.push(...items.map(it => String(it.series_id || '')).filter(Boolean));
+    items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
+    state.items = state.items.concat(items);
+  }
+
+  /**
+   * 统一的分页拉取：调用接口、去重追加、更新状态。
+   * build(off) 返回 { url, pick(j) -> items, offsetOf(j) } 。
+   */
+  async function fetchPageInto(gridSel, build) {
+    const spec = build(inf.offset);
+    const j = await api(spec.url);
+    const items = (spec.pick(j) || []).filter(it => it && it.series_id
+      && !inf.ids.has(String(it.series_id)));
+    appendCards(items, gridSel);
+    inf.hasMore = (j.has_more !== false) && items.length > 0;
+    inf.offset = typeof spec.offsetOf === 'function'
+      ? (spec.offsetOf(j) || inf.offset + items.length)
+      : inf.offset + items.length;
+  }
+
   async function loadTab(tab) {
     state.tab = tab;
     state.offset = 0;
     state.items = [];
+    teardownInf();
     document.querySelectorAll('.tab').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === tab);
     });
@@ -393,32 +506,68 @@
     const j = await api(`/rank?board=${encodeURIComponent(board)}&limit=30`);
     state.items = j.items || [];
     view.innerHTML = `<div class="section-head"><h2>${esc(title || j.name || '榜单')}</h2>
-      <span class="muted">${state.items.length} 部</span></div>
-      <div class="grid">${state.items.map(cardTemplate).join('')}</div>`;
+      <span class="muted" id="rankCount">${state.items.length} 部</span></div>
+      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
+      <div id="infFoot"></div>`;
     bindCards();
+    setStatus(`${title || '榜单'} · ${state.items.length} 部`, 'ok');
+    // 无后续页时不挂观察器，省掉一次无谓的哨兵
+    if (j.next_offset) {
+      resetInf(`rank:${board}`);
+      inf.nextOffset = j.next_offset;
+      inf.fetchPage = () => fetchRankMore(board, title);
+      renderFoot();
+      mountSentinel();
+    }
+  }
+
+  /** 榜单续页：走 offset 分页路径，直接取上游下一段。 */
+  async function fetchRankMore(board, title) {
+    await fetchPageInto('grid', () => ({
+      url: `/rank?board=${encodeURIComponent(board)}&limit=30&offset=${inf.offset}`,
+      pick: (j) => j.items,
+      offsetOf: (j) => j.next_offset,
+    }));
+    const c = document.getElementById('rankCount');
+    if (c) c.textContent = `${state.items.length} 部`;
     setStatus(`${title || '榜单'} · ${state.items.length} 部`, 'ok');
   }
 
   async function renderRankPanel() {
     const boards = [['recommend', '推荐榜'], ['hot', '热播榜'], ['new', '新剧榜']];
-    const j = await api('/rank?board=recommend&limit=30');
+    // 初始选热播榜（i === 1）而非推荐榜：推荐 tab 用的就是 recommend，
+    // 若这里也用 recommend，两个 tab 首屏会渲染出完全相同的内容。
+    // 后端 /rank 按 board 取不同上游榜单（sub_selected_items 不同），
+    // 缓存 key 也按 board 区分，因此换默认项即可让两个 tab 内容区分开。
+    const DEF_BOARD = 'hot';
+    const j = await api(`/rank?board=${encodeURIComponent(DEF_BOARD)}&limit=30`);
     state.items = j.items || [];
     view.innerHTML = `<div class="section-head">
         <h2>榜单</h2>
         <div class="chips" id="rankChips">
-          ${boards.map(([b, n], i) => `<button class="chip${i === 0 ? ' on' : ''}" data-b="${b}">${n}</button>`).join('')}
+          ${boards.map(([b, n]) => `<button class="chip${b === DEF_BOARD ? ' on' : ''}" data-b="${b}">${n}</button>`).join('')}
         </div>
+        <span class="muted" id="rankCount">${state.items.length} 部</span>
       </div>
-      <div class="grid">${state.items.map(cardTemplate).join('')}</div>`;
+      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
+      <div id="infFoot"></div>`;
     $('rankChips').addEventListener('click', async (e) => {
-      const b = e.target.dataset.b;
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      const b = chip.dataset.b;
       if (!b) return;
-      $('rankChips').querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === e.target));
+      $('rankChips').querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === chip));
       view.innerHTML = '<div class="loading">加载中…</div>';
-      await loadRank(b, e.target.textContent);
+      await loadRank(b, chip.textContent);
     });
     bindCards();
-    setStatus('榜单已加载', 'ok');
+    setStatus(`榜单 · ${DEF_BOARD === 'hot' ? '热播榜' : DEF_BOARD} · ${state.items.length} 部`, 'ok');
+    if (j.next_offset) {
+      resetInf(`rank:${DEF_BOARD}`);
+      inf.fetchPage = () => fetchRankMore(DEF_BOARD, DEF_BOARD === 'hot' ? '热播榜' : DEF_BOARD);
+      renderFoot();
+      mountSentinel();
+    }
   }
 
   async function loadLatest(genre, onlyToday) {
@@ -431,10 +580,13 @@
           ${genres.map(([g, n]) => `<button class="chip${g === genre ? ' on' : ''}" data-g="${g}">${n}</button>`).join('')}
           <button class="chip${onlyToday ? ' on' : ''}" id="todayChip">仅今日</button>
         </div>
+        <span class="muted" id="latestCount">${state.items.length} 部</span>
       </div>
-      <div class="grid">${state.items.map(cardTemplate).join('')}</div>`;
+      <div class="grid" id="grid">${state.items.map(cardTemplate).join('')}</div>
+      <div id="infFoot"></div>`;
     $('genreChips').addEventListener('click', async (e) => {
-      const g = e.target.dataset.g;
+      const chip = e.target.closest('.chip');
+      const g = chip && chip.dataset.g;
       if (g) { view.innerHTML = '<div class="loading">加载中…</div>'; await loadLatest(g, onlyToday); return; }
       if (e.target.id === 'todayChip') {
         view.innerHTML = '<div class="loading">加载中…</div>';
@@ -443,6 +595,23 @@
     });
     bindCards();
     setStatus(`${j.name || ''} ${j.mode || ''} · ${state.items.length} 部`, 'ok');
+    resetInf(`latest:${genre}:${onlyToday}`);
+    state.items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
+    state.items.forEach(it => { if (it.series_id) inf.seen.push(String(it.series_id)); });
+    inf.fetchPage = () => fetchLatestMore(genre, onlyToday);
+    renderFoot();
+    mountSentinel();
+  }
+
+  /** 最新上架续页：把已看过的 id 一起回传，上游据此去重。 */
+  async function fetchLatestMore(genre, onlyToday) {
+    await fetchPageInto('grid', () => ({
+      url: `/latest?genre=${genre}&only_today=${onlyToday}&limit=60&offset=${inf.offset}&seen=${encodeURIComponent(seenParam())}`,
+      pick: (j) => j.items,
+      offsetOf: (j) => j.next_offset,
+    }));
+    const c = document.getElementById('latestCount');
+    if (c) c.textContent = `${state.items.length} 部`;
   }
 
   async function renderBrowsePanel() {
@@ -524,15 +693,48 @@
       const box = $('browseResult');
       box.innerHTML = '<div class="loading">加载中…</div>';
       setStatus('浏览请求中…');
-      const p = new URLSearchParams({ genre: sel.genre, sort: sel.sort, limit: '60' });
-      if (sel.theme.size) p.set('theme', [...sel.theme].join(','));
-      if (sel.days.size) p.set('days', [...sel.days][0]);
+      const buildQuery = (off) => {
+        const p = new URLSearchParams({ genre: sel.genre, sort: sel.sort, limit: '60' });
+        if (sel.theme.size) p.set('theme', [...sel.theme].join(','));
+        if (sel.days.size) p.set('days', [...sel.days][0]);
+        if (off > 0) {
+          p.set('offset', String(off));
+          p.set('seen', seenParam());
+        }
+        return p.toString();
+      };
       try {
-        const j = await api(`/browse?${p}`);
-        box.innerHTML = (j.items || []).map(cardTemplate).join('') || '<div class="empty">无结果</div>';
+        const j = await api(`/browse?${buildQuery(0)}`);
+        state.items = j.items || [];
+        box.innerHTML = (state.items.map(cardTemplate).join('')) || '<div class="empty">无结果</div>';
         bindCards();
-        setStatus(`浏览 · ${(j.items || []).length} 部`, 'ok');
+        setStatus(`浏览 · ${state.items.length} 部`, 'ok');
+        // 结果区后面补底部哨兵；无后续页时直接显示到底提示
+        let foot = document.getElementById('infFoot');
+        if (!foot) {
+          foot = document.createElement('div');
+          foot.id = 'infFoot';
+          box.insertAdjacentElement('afterend', foot);
+        }
+        resetInf(`browse:${JSON.stringify(sel)}`);
+        state.items.forEach(it => {
+          if (it.series_id) { inf.ids.add(String(it.series_id)); inf.seen.push(String(it.series_id)); }
+        });
+        inf.hasMore = (j.has_more !== false) && state.items.length > 0;
+        inf.fetchPage = () => fetchBrowseMore(buildQuery);
+        renderFoot();
+        mountSentinel();
       } catch (e) { box.innerHTML = ''; handleError(e); }
+    }
+
+    /** 筛选浏览续页：带 offset 与已看 id。 */
+    async function fetchBrowseMore(buildQuery) {
+      await fetchPageInto('browseResult', () => ({
+        url: `/browse?${buildQuery(inf.offset)}`,
+        pick: (j) => j.items,
+        offsetOf: (j) => j.next_offset,
+      }));
+      setStatus(`浏览 · ${state.items.length} 部`, 'ok');
     }
 
     await loadFilters('short_play');
@@ -1196,13 +1398,33 @@
     try {
       const j = await api(`/search?q=${encodeURIComponent(q)}&limit=30`);
       const items = j.results || [];
+      state.items = items;
       view.innerHTML = `<div class="section-head"><h2>搜索「${esc(q)}」</h2>
-        <span class="muted">${items.length} 个结果</span></div>
-        ${items.length ? `<div class="grid">${items.map(cardTemplate).join('')}</div>`
-          : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}`;
+        <span class="muted" id="searchCount">${items.length} 个结果</span></div>
+        ${items.length ? `<div class="grid" id="grid">${items.map(cardTemplate).join('')}</div>`
+          : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}
+        <div id="infFoot"></div>`;
       bindCards();
       setStatus(`搜索完成 · ${items.length} 个结果`, 'ok');
+      resetInf(`search:${q}`);
+      state.items.forEach(it => { if (it.series_id) inf.ids.add(String(it.series_id)); });
+      inf.hasMore = (j.has_more !== false) && items.length > 0;
+      inf.fetchPage = () => fetchSearchMore(q);
+      renderFoot();
+      if (inf.hasMore) mountSentinel();
     } catch (e) { handleError(e); }
+  }
+
+  /** 搜索续页。 */
+  async function fetchSearchMore(q) {
+    await fetchPageInto('grid', () => ({
+      url: `/search?q=${encodeURIComponent(q)}&limit=30&offset=${inf.offset}`,
+      pick: (j) => j.results,
+      offsetOf: (j) => j.next_offset,
+    }));
+    const c = document.getElementById('searchCount');
+    if (c) c.textContent = `${state.items.length} 个结果`;
+    setStatus(`搜索完成 · ${state.items.length} 个结果`, 'ok');
   }
 
   // ---------- 错误处理 ----------
