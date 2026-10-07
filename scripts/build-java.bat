@@ -1,12 +1,12 @@
 @echo off
 @chcp 65001 >nul 2>&1
-@setlocal EnableDelayedExpansion
+@setlocal DisableDelayedExpansion
 @title 构建 hongguo-api.jar
 
 @cd /d "%~dp0.."
 @if not exist "java\src\com\hongguo\api\Main.java" (
   echo   [错误] 定位不到项目根目录（java\src 不存在）。
-  echo          当前目录：!CD!
+  echo          当前目录：%CD%
   echo          请通过 scripts\build-java.bat 或 scripts\start.bat 运行，
   echo          不要单独复制本脚本到其他位置执行。
   echo.
@@ -49,13 +49,14 @@ echo.
 )
 
 @where javac >nul 2>&1
-@if not errorlevel 1 (
-  @for %%i in (javac.exe) do set "JDK_BIN=%%~dp$PATH:i"
-  @set "JAVAC_BIN=!JDK_BIN!javac.exe"
-  echo   [JDK] 系统 PATH
-  @goto :compile
-)
+@if errorlevel 1 goto :no_jdk
 
+@for %%i in (javac.exe) do set "JDK_BIN=%%~dp$PATH:i"
+@set "JAVAC_BIN=%JDK_BIN%javac.exe"
+echo   [JDK] 系统 PATH
+@goto :compile
+
+:no_jdk
 echo   [错误] 未找到 javac，本机无法编译 Java 源码。
 echo          说明：发行包已内置 java\dist\hongguo-api.jar，
 echo          正常启动不会走到这里 —— 仅在 JAR 缺失（被删除或自行修改
@@ -70,7 +71,7 @@ echo.
 :compile
 @"%JAVAC_BIN%" -version 2>&1 | findstr /r "javac" >nul 2>&1
 @if errorlevel 1 (
-  echo   [警告] 无法读取 javac 版本（可能版本过旧或已损坏）：!JAVAC_BIN!
+  echo   [警告] 无法读取 javac 版本（可能版本过旧或已损坏）：%JAVAC_BIN%
 )
 
 echo   [1/2] 编译源码 ...
@@ -79,7 +80,7 @@ echo   [1/2] 编译源码 ...
 @if not exist "java\build\classes" (
   echo.
   echo   [错误] 无法创建 java\build\classes 目录。
-  echo          当前目录：!CD!
+  echo          当前目录：%CD%
   echo          常见原因：目录被其他程序占用（资源管理器/杀毒软件），
   echo                    或磁盘权限不足。请关闭占用后重试。
   echo.
@@ -104,7 +105,7 @@ echo   [1/2] 编译源码 ...
 )
 
 @for /f %%c in ('find /v /c "" ^< "java\build\sources.txt"') do set CNT=%%c
-echo         源文件 !CNT! 个
+echo         源文件 %CNT% 个
 
 @"%JAVAC_BIN%" -encoding UTF-8 -d "java\build\classes" @"java\build\sources.txt"
 @if errorlevel 1 (
@@ -128,15 +129,15 @@ echo   [2/2] 打包 JAR ...
 @pushd "java\build\classes"
 @if errorlevel 1 (
   echo   [错误] 无法进入 java\build\classes（系统找不到指定的路径）。
-  echo          当前目录：!CD!
+  echo          当前目录：%CD%
   echo          请关闭占用该目录的程序后重试。
   echo.
   @pause
   @exit /b 1
 )
 
-@if exist "!JDK_BIN!jar.exe" (
-  @"!JDK_BIN!jar.exe" --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
+@if exist "%JDK_BIN%jar.exe" (
+  @"%JDK_BIN%jar.exe" --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
 ) else (
   @jar --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
 )
@@ -146,7 +147,7 @@ echo   [2/2] 打包 JAR ...
 @if not "%RC%"=="0" (
   echo.
   echo   [错误] 打包失败（jar 退出码 %RC%）。
-  echo          使用的 JDK bin：!JDK_BIN!
+  echo          使用的 JDK bin：%JDK_BIN%
   echo          请确认该目录下 jar.exe 存在且为 JDK 9+。
   @pause
   @exit /b 1
@@ -156,7 +157,7 @@ echo   [2/2] 打包 JAR ...
 @set /a SIZE_KB=%SIZE% / 1024
 
 echo.
-echo   构建完成：java\dist\hongguo-api.jar (!SIZE_KB! KB)
+echo   构建完成：java\dist\hongguo-api.jar (%SIZE_KB% KB)
 echo.
 echo   启动：scripts\start.bat
 echo.

@@ -1,6 +1,6 @@
 @echo off
 @chcp 65001 >nul 2>&1
-@setlocal EnableDelayedExpansion
+@setlocal DisableDelayedExpansion
 @title 安装 Java 运行时（签名服务依赖）
 
 @cd /d "%~dp0.."

@@ -1,6 +1,6 @@
 @echo off
 @chcp 65001 >nul 2>&1
-@setlocal EnableDelayedExpansion
+@setlocal DisableDelayedExpansion
 @title 停止 红果短剧 - 网页版
 
 @cd /d "%~dp0.."

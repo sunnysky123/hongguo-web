@@ -1,6 +1,6 @@
 @echo off
 @chcp 65001 >nul 2>&1
-@setlocal EnableDelayedExpansion
+@setlocal DisableDelayedExpansion
 @title 红果短剧 - 网页版
 
 @cd /d "%~dp0.."
@@ -19,22 +19,22 @@
 )
 
 echo.
-echo   正在启动，稍后浏览器会自动打开：http://127.0.0.1:!API_PORT!/
+echo   正在启动，稍后浏览器会自动打开：http://127.0.0.1:%API_PORT%/
 echo   启动器日志：%CD%\%LOG_FILE%
 echo.
 
-@if /i "!MODE!"=="nosign"   set "PORT=!API_PORT!"
-@if /i "!MODE!"=="signonly" set "SIGN_PORT=!SIGN_PORT!"
+@if /i "%MODE%"=="nosign"   set "PORT=%API_PORT%"
+@if /i "%MODE%"=="signonly" set "SIGN_PORT=%SIGN_PORT%"
 
-@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --port !SIGN_PORT!
-@set "RC=!ERRORLEVEL!"
-@>>"%LOG_FILE%" echo [%DATE% %TIME%] ===== start.bat 结束（exit=!RC!）=====
-@if not "!RC!"=="0" (
+@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --port %SIGN_PORT%
+@set "RC=%ERRORLEVEL%"
+@>>"%LOG_FILE%" echo [%DATE% %TIME%] ===== start.bat 结束（exit=%RC%）=====
+@if not "%RC%"=="0" (
   echo.
-  echo   [退出] 服务异常退出（code=!RC!），详见日志：%CD%\%LOG_FILE%
+  echo   [退出] 服务异常退出（code=%RC%），详见日志：%CD%\%LOG_FILE%
   echo.
 @ pause
-@ exit /b !RC!
+@ exit /b %RC%
 )
 echo.
 echo   服务已停止。启动器日志：%LOG_FILE%
@@ -52,7 +52,7 @@ echo   hongguo-web launcher (Windows)
   echo   [错误] Java 运行时不可用，无法继续。
 @ exit /b 1
 )
-echo   [1/4] Java !JAVAVER!（!JAVA_SRC!）
+echo   [1/4] Java %JAVAVER%（%JAVA_SRC%）
 
 @if not exist "signer\unidbg-sign.jar" (
   echo.
@@ -94,15 +94,15 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
 @if /i "%SCRIPT_ARG%"=="--no-sign"   set MODE=nosign
 @if /i "%SCRIPT_ARG%"=="--sign-only" set MODE=signonly
 
-@set OPEN_URL=http://127.0.0.1:!API_PORT!/
-@if /i "!MODE!"=="signonly" goto :no_browser
+@set OPEN_URL=http://127.0.0.1:%API_PORT%/
+@if /i "%MODE%"=="signonly" goto :no_browser
 @if /i "%HG_OPEN_BROWSER%"=="0" goto :no_browser
 @start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 240;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser
 
 echo   [4/4] 启动参数就绪，交由 hongguo-api.jar 运行
-echo   API 端口 !API_PORT!   签名端口 !SIGN_PORT!   模式 !MODE!
+echo   API 端口 %API_PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
 @exit /b 0
 
 :ensure_java
@@ -112,14 +112,14 @@ echo   API 端口 !API_PORT!   签名端口 !SIGN_PORT!   模式 !MODE!
 @ if not defined BUNDLED_BIN if exist "%%~fd\bin\java.exe" set "BUNDLED_BIN=%%~fd\bin"
 )
 @if defined BUNDLED_BIN (
-  @set "PATH=!BUNDLED_BIN!;%PATH%"
+  @set "PATH=%BUNDLED_BIN%;%PATH%"
   @set "JAVA_SRC=项目自带 JRE"
   @set "JAVA_FROM_BUNDLED=1"
   @goto :found_java
 )
 
 @if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" (
-  @set "PATH=%JAVA_HOME%\bin;!PATH%"
+  @set "PATH=%JAVA_HOME%\bin;%PATH%"
   @set "JAVA_SRC=JAVA_HOME"
   @goto :found_java
 )
@@ -158,10 +158,10 @@ echo.
 @if not defined JAVA_DIR if exist "%ProgramFiles%\Java\jdk-25\bin\java.exe" set "JAVA_DIR=%ProgramFiles%\Java\jdk-25"
 @if not defined JAVA_DIR if exist "%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25\bin\java.exe" set "JAVA_DIR=%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25"
 @if defined JAVA_DIR (
-  @set "PATH=!JAVA_DIR!\bin;%PATH%"
+  @set "PATH=%JAVA_DIR%\bin;%PATH%"
   @set "JAVA_SRC=安装目录"
   echo.
-  echo   已刷新 PATH：!JAVA_DIR!\bin
+  echo   已刷新 PATH：%JAVA_DIR%\bin
 )
 
 @where java >nul 2>&1
@@ -174,16 +174,14 @@ echo.
 
 :found_java
 @set JAVAVER=unknown
-@for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version ""[0-9]"') do (
-  @set "JAVAVER=%%~v"
-  @set "JAVAVER=!JAVAVER:v=!"
-)
+@for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version ""[0-9]"') do @set "JAVAVER=%%~v"
+@set "JAVAVER=%JAVAVER:v=%"
 
 @set JAVA_MAJOR=0
-@for /f "tokens=1 delims=." %%m in ("!JAVAVER!") do set "JAVA_MAJOR=%%m"
-@if !JAVA_MAJOR! LSS 17 (
+@for /f "tokens=1 delims=." %%m in ("%JAVAVER%") do set "JAVA_MAJOR=%%m"
+@if %JAVA_MAJOR% LSS 17 (
   echo.
-  echo   [错误] Java 版本过低或无法识别：!JAVAVER!（来源：!JAVA_SRC!）
+  echo   [错误] Java 版本过低或无法识别：%JAVAVER%（来源：%JAVA_SRC%）
   echo          需要 Java 17 或更高版本，推荐 Temurin 25 LTS。
 @ if defined JAVA_FROM_BUNDLED (
     echo          处理：jre 里的 JRE 版本过低或已损坏，
