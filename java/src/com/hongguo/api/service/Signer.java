@@ -2,6 +2,7 @@ package com.hongguo.api.service;
 
 import com.hongguo.api.util.Http;
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.io.IOException;
@@ -32,7 +33,7 @@ public final class Signer {
 
     /** 原 SIGN_SERVER 的默认值：逗号分隔的地址列表。 */
     public static List<String> signServers() {
-        String raw = Log.env("SIGN_SERVER", "");
+        String raw = Config.str("signer.server", "");
         List<String> out = new ArrayList<>();
         for (String s : raw.split(",")) {
             String t = s.trim();

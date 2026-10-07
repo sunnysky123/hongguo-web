@@ -3,6 +3,7 @@ package com.hongguo.api.service;
 import com.hongguo.api.core.Mp4;
 import com.hongguo.api.core.Spade;
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.io.IOException;
@@ -39,7 +40,7 @@ public final class Stream {
     private static Path cacheDir() {
         String d = Log.env("HONGGUO_STREAM_CACHE", null);
         if (d != null) return Paths.get(d);
-        String dd = Log.env("HONGGUO_DATA_DIR", null);
+        String dd = Config.str("runtime.data_dir", null);
         Path base = (dd != null) ? Paths.get(dd) : Paths.get("server", "data");
         // 转绝对路径：/download 会把落盘路径回给调用方，相对路径不便定位文件
         return base.resolve("stream-cache").toAbsolutePath();
@@ -289,7 +290,7 @@ public final class Stream {
         Path out = Paths.get(dir, stem + ".play.mp4");
 
         // 转码默认关闭（HG_TRANSCODE=1 才开）
-        boolean want = Log.envBool("HG_TRANSCODE", false);
+        boolean want = Config.bool("runtime.transcode", false);
         Encoder enc = want ? h264Encoder() : null;
         if (want && enc == null) {
             Log.info("HG_TRANSCODE=1 但未找到可用的 H.264 编码器，本集退回 -c copy；"
@@ -690,12 +691,12 @@ public final class Stream {
 
     /** 转码是否启用（HG_TRANSCODE=1 且找到编码器）。 */
     public static boolean transcodeEnabled() {
-        return Log.envBool("HG_TRANSCODE", false) && h264EncoderName() != null;
+        return Config.bool("runtime.transcode", false) && h264EncoderName() != null;
     }
 
     /** 当前实际使用的 H.264 编码器名（未启用/不可用时返回 null）。 */
     public static String h264EncoderName() {
-        if (!Log.envBool("HG_TRANSCODE", false)) return null;
+        if (!Config.bool("runtime.transcode", false)) return null;
         if (!ffmpegAvailable()) return null;
         Encoder e = h264Encoder();
         return e != null ? e.name : null;

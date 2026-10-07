@@ -2,6 +2,7 @@ package com.hongguo.api.core;
 
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.nio.charset.StandardCharsets;
@@ -47,7 +48,7 @@ public final class KeyStore {
     }
 
     public KeyStore() {
-        String d = Log.env("HONGGUO_DATA_DIR", null);
+        String d = Config.str("runtime.data_dir", null);
         Path dir = (d != null) ? Paths.get(d) : Paths.get("server", "data");
         this.file = dir.resolve("apikeys.json");
         load();

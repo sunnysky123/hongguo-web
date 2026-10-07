@@ -1,6 +1,7 @@
 package com.hongguo.api.core;
 
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.security.SecureRandom;
@@ -48,15 +49,15 @@ public final class Safeguards {
             new java.util.concurrent.atomic.AtomicInteger();
 
     /** 条数上限：HG_MEM_CACHE_MAX，默认 4096。 */
-    private static final int MAX_ENTRIES = Log.envInt("HG_MEM_CACHE_MAX", 4096);
+    private static final int MAX_ENTRIES = Config.num("runtime.cache.mem_max", 4096);
 
     /** 字节上限：HG_MEM_CACHE_MAX_MB，默认 128MB。 */
     private static final long MAX_BYTES =
-            (long) Log.envInt("HG_MEM_CACHE_MAX_MB", 128) * 1024L * 1024L;
+            (long) Config.num("runtime.cache.mem_max_mb", 128) * 1024L * 1024L;
 
     /** 清扫周期：HG_SWEEP_INTERVAL_MS，默认 60s。 */
     private static final long SWEEP_INTERVAL_MS =
-            Log.envInt("HG_SWEEP_INTERVAL_MS", 60) * 1000L;
+            Config.num("runtime.sweep_interval_ms", 60) * 1000L;
 
     static {
         // 后台清扫过期条目：这是让 TTL 真正生效的关键。
@@ -249,7 +250,7 @@ public final class Safeguards {
         private long last = 0;
 
         public Throttle() {
-            this.minIntervalMs = Log.envInt("HG_THROTTLE_MS", 260);
+            this.minIntervalMs = Config.num("runtime.throttle_ms", 260);
         }
 
         public synchronized void wait_() {

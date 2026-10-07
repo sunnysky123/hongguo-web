@@ -9,6 +9,7 @@ import com.hongguo.api.service.Stream;
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Http;
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import com.sun.net.httpserver.HttpExchange;
@@ -215,7 +216,7 @@ public class Server {
     }
 
     /** 触发空闲清理的桶数量阈值：HG_RATE_BUCKETS_MAX，默认 4096。 */
-    private static final int RATE_BUCKETS_MAX = Log.envInt("HG_RATE_BUCKETS_MAX", 4096);
+    private static final int RATE_BUCKETS_MAX = Config.num("runtime.rate_buckets_max", 4096);
 
     /** 每个桶预分配的时间戳槽位；需 >= ratePerMin，否则超出部分无法记录。 */
     private static final int RATE_PER_MIN_SLOTS =
@@ -223,7 +224,7 @@ public class Server {
 
     /** 桶空闲多久后回收：HG_RATE_BUCKET_IDLE_MS，默认 10 分钟。 */
     private static final long RATE_BUCKET_IDLE_MS =
-            Log.envInt("HG_RATE_BUCKET_IDLE_MS", 600) * 1000L;
+            Config.num("runtime.rate_bucket_idle_ms", 600) * 1000L;
 
     /** 淘汰空闲超时的桶。 */
     private void sweepBuckets(long now) {
@@ -750,11 +751,11 @@ public class Server {
 
     /** 图片缓存字节上限：HG_IMG_CACHE_MAX_MB，默认 64MB。 */
     private static final long IMG_CACHE_MAX_BYTES =
-            (long) Log.envInt("HG_IMG_CACHE_MAX_MB", 64) * 1024L * 1024L;
+            (long) Config.num("runtime.cache.img_max_mb", 64) * 1024L * 1024L;
 
     /** 单张图片上限：HG_IMG_MAX_KB，默认 4MB，超限不缓存。 */
     private static final long IMG_MAX_BYTES =
-            (long) Log.envInt("HG_IMG_MAX_KB", 4096) * 1024L;
+            (long) Config.num("runtime.cache.img_max_kb", 4096) * 1024L;
 
     private static byte[] imgCacheGet(String url) {
         synchronized (imgCache) {

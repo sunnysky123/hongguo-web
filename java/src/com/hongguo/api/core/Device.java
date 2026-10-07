@@ -1,6 +1,7 @@
 package com.hongguo.api.core;
 
 import com.hongguo.api.util.Json;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.nio.charset.StandardCharsets;
@@ -40,7 +41,7 @@ public final class Device {
     private static final SecureRandom RND = new SecureRandom();
 
     private static Path dataDir() {
-        String d = Log.env("HONGGUO_DATA_DIR", null);
+        String d = Config.str("runtime.data_dir", null);
         if (d != null) return Paths.get(d);
         return Paths.get("server", "data");
     }
@@ -117,7 +118,7 @@ public final class Device {
     public static Identity ensureDeviceId(Map<String, Object> baseQuery) {
         // 1) 环境变量优先：支持同一台机器跑多个实例并各自隔离身份
         String fromEnv = Log.env("HONGGUO_DEVICE_ID",
-                Log.env("HG_DEVICE_ID", "")).trim();
+                Config.str("runtime.device_id", "")).trim();
         if (!fromEnv.isEmpty() && isValidId(fromEnv)) {
             if (baseQuery != null && !isValidId(Json.optStr(baseQuery.get("device_id"), ""))) {
                 baseQuery.put("device_id", fromEnv);

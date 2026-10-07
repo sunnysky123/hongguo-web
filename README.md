@@ -35,12 +35,29 @@ ls
 启动 unidbg 签名服务，等待就绪后拉起 API 服务，并**自动打开浏览器**访问
 **<http://127.0.0.1:8000/>**（服务真正就绪后才会打开，不会撞上白屏）。
 
+**端口、监听地址、是否启用签名服务等都在 [`server/config/config.json`](server/config/config.json) 里改，
+改完保存即可生效，不用设任何环境变量。** 查看当前实际生效的配置：
+
+    java -jar java\dist\hongguo-api.jar --config
+
+配置项（节选）：
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `api.host` | `127.0.0.1` | 监听地址。改成 `0.0.0.0` 可让局域网其他设备访问 |
+| `api.port` | `8000` | API 服务端口 |
+| `signer.enabled` | `true` | 是否启动签名服务。设 `false` 等价于 `--no-sign`，此时**无法播放** |
+| `signer.port` | `9099` | 签名服务端口 |
+| `signer.jvm_xmx` | `512m` | 签名服务堆上限 |
+| `launcher.open_browser` | `true` | 启动后是否自动开浏览器 |
+
+优先级为 **命令行参数 > 环境变量 > 配置文件 > 内置默认值**，
+所以临时试一下仍可用环境变量覆盖，例如 `PORT=9000 scripts\start.bat`。
+
 **未安装 Java 时会自动调用 `install-jre.bat` 下载安装 Temurin 25 LTS**，
 装完自动刷新 PATH 并继续启动，无需手工干预。
-若需跳过自动安装（CI / 离线环境），先设置环境变量 `HG_SKIP_JRE_INSTALL=1`，
+若需跳过自动安装（CI / 离线环境），把配置项 `launcher.skip_jre_install` 设为 `true`，
 此时只会提示缺失并退出。
-
-不想自动开浏览器时，设置 `HG_OPEN_BROWSER=0` 即可。
 
 其他模式：
 
@@ -146,6 +163,7 @@ hongguo-web/
 ├── jre/                          自带 Windows JRE 25 LTS（仓库根目录，独立于 signer）
 ├── capture/fq_oversea/           签名算法依赖的 so（路径不可改）
 ├── server/
+│   ├── config/config.json        启动配置（端口、监听地址、签名开关、调优参数）
 │   ├── config/content-config.json  上游配置与 base_query
 │   └── data/                       运行时数据（密钥、设备标识、解密缓存）
 └── web/                          前端静态资源

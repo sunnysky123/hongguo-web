@@ -1,5 +1,6 @@
 package com.hongguo.api;
 
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.io.BufferedReader;
@@ -31,9 +32,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   java -jar hongguo-api.jar --no-sign          # 仅 API（免签列表页）
  *   java -jar hongguo-api.jar --sign-only        # 仅签名服务
  *   java -jar hongguo-api.jar --port 9000        # 指定签名服务端口
+ *   java -jar hongguo-api.jar --config           # 打印当前生效配置后退出
  *   java -jar hongguo-api.jar --selftest         # 跑自检
  *
- * 环境变量：
+ * 配置来源（优先级由高到低）：
+ *   命令行参数 &gt; 系统属性 -Dxxx &gt; 环境变量 &gt; server/config/config.json &gt; 内置默认值
+ *   日常改配置请编辑 server/config/config.json，环境变量仅用于临时覆盖。
+ *
+ * 环境变量（覆盖配置文件用，一般不需要设）：
  *   JAVA_HOME / PATH        用于探测 java
  *   SIGN_SERVER             显式指定签名服务地址（不启动本地服务）
  *   SIGN_PORT               签名服务端口，默认 9099
@@ -62,7 +68,11 @@ public final class Launcher {
     public static void main(String[] args) throws Exception {
         boolean noSign = false;
         boolean signOnly = false;
-        int signPort = Log.envInt("SIGN_PORT", 9099);
+        // 配置默认值来自 config.json（环境变量优先级更高，见 Config.str）
+        int signPort = Config.num("signer.port", 9099);
+        // 配置里显式关掉签名服务，等价于命令行 --no-sign
+        boolean signDisabledByConfig = !Config.bool("signer.enabled", true);
+        if (signDisabledByConfig) noSign = true;
 
         for (int i = 0; i < args.length; i++) {
             String a = args[i];
@@ -77,17 +87,25 @@ public final class Launcher {
             }
         }
 
+        // --config：只打印生效配置，不启动任何服务
+        for (String a : args) {
+            if (a.equals("--config") || a.equals("--show-config")) {
+                printConfig(signPort, noSign, signOnly);
+                return;
+            }
+        }
+
         // 尽早注册关闭钩子：必须在启动签名服务之前，
         // 否则启动过程中被 Ctrl-C 就会漏掉子进程清理。
         List<Process> children = new ArrayList<>();
         AtomicBoolean shuttingDown = new AtomicBoolean(false);
         registerShutdownHook(children, shuttingDown);
 
-        int apiPort = Log.envInt("PORT", 8000);
-        String bindHost = Log.env("BIND_HOST", "127.0.0.1");
-        String jvmXmx = Log.env("SIGN_JVM_XMX", "512m");
-        int readyTimeout = Log.envInt("READY_TIMEOUT_MS", 90000);
-        String externalSign = Log.env("SIGN_SERVER", "");
+        int apiPort = Config.num("api.port", 8000);
+        String bindHost = Config.str("api.host", "127.0.0.1");
+        String jvmXmx = Config.str("signer.jvm_xmx", "512m");
+        int readyTimeout = Config.num("signer.ready_timeout_ms", 90000);
+        String externalSign = Config.str("signer.server", "");
 
         banner();
 
@@ -251,6 +269,36 @@ public final class Launcher {
         Log.info("");
     }
 
+    /**
+     * 打印当前生效配置（{@code --config}）。
+     *
+     * 供用户确认「我改的配置到底生效没有」——排查配置问题时，
+     * 比起逐层追问日志，直接看这一段最快。
+     */
+    private static void printConfig(int signPort, boolean noSign, boolean signOnly) {
+        System.out.println();
+        System.out.println("  生效配置（命令行 > 环境变量 > 配置文件 > 默认值）");
+        System.out.println("  " + "-".repeat(56));
+        String src = Config.loadedFrom();
+        System.out.printf("    配置文件      : %s%n",
+                src == null ? "未找到（使用内置默认值）" : src);
+        System.out.printf("    api.host       : %s%n", Config.str("api.host", "127.0.0.1"));
+        System.out.printf("    api.port       : %d%n", Config.num("api.port", 8000));
+        System.out.printf("    signer.enabled : %s%n", Config.bool("signer.enabled", true));
+        System.out.printf("    signer.port    : %d%n", signPort);
+        String sv = Config.str("signer.server", "");
+        System.out.printf("    signer.server  : %s%n", sv.isEmpty() ? "（本机自启）" : sv);
+        System.out.printf("    signer.jvm_xmx : %s%n", Config.str("signer.jvm_xmx", "512m"));
+        System.out.printf("    ready_timeout  : %d ms%n",
+                Config.num("signer.ready_timeout_ms", 90000));
+        System.out.printf("    transcode      : %s%n", Config.bool("runtime.transcode", false));
+        System.out.printf("    show_metasec   : %s%n", Config.bool("runtime.show_metasec", false));
+        System.out.printf("    运行模式       : %s%n",
+                signOnly ? "仅签名服务" : (noSign ? "仅 API（免签）" : "完整"));
+        System.out.println("  " + "-".repeat(56));
+        System.out.println();
+    }
+
     // ==================== 签名服务 ====================
 
     /**
@@ -310,7 +358,7 @@ public final class Launcher {
      * 之所以过滤而非放任：它每次签名都刷一行，会把真正的错误淹没。
      */
     private static void pipeSigner(InputStream in) {
-        boolean showMetasec = Log.envBool("HG_SHOW_METASEC", false);
+        boolean showMetasec = Config.bool("runtime.show_metasec", false);
         try {
             // so 的 stderr 不是按行吐的，而是把一句话拆成若干独立事件
             // （"[main" / "]E/METASEC: Fatal..." / ...）。因此必须维护 pending
@@ -610,7 +658,7 @@ public final class Launcher {
             Log.info("");
             Log.info("[signer] 已抑制 " + n
                     + " 条 METASEC \"SDK not init\" 告警（不影响签名，上游实测 code=0）");
-            if (!Log.envBool("HG_SHOW_METASEC", false)) {
+            if (!Config.bool("runtime.show_metasec", false)) {
                 Log.info("  如需查看原始告警：设置 HG_SHOW_METASEC=1");
             }
         }

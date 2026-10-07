@@ -32,7 +32,22 @@ kill_matching 'server/src/server\.js' 'server/src/server.js' api-node
 
 sleep 1
 
-for port in "${API_PORT:-8000}" "${SIGN_PORT:-9099}"; do
+# 端口检测跟随 server/config/config.json
+API_PORT="${PORT:-8000}"
+SIGN_PORT="${SIGN_PORT:-9099}"
+CFG="server/config/config.json"
+if [ -f "$CFG" ]; then
+  read -r A S <<<"$(python3 - "$CFG" <<'PY' 2>/dev/null || true
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+print(d.get('api',{}).get('port',8000), d.get('signer',{}).get('port',9099))
+PY
+)"
+  [ -n "${A:-}" ] && API_PORT="${PORT:-$A}"
+  [ -n "${S:-}" ] && SIGN_PORT="${SIGN_PORT:-$S}"
+fi
+
+for port in "$API_PORT" "$SIGN_PORT"; do
   if command -v lsof >/dev/null 2>&1 && lsof -ti tcp:"$port" >/dev/null 2>&1; then
     echo "   [提示] 端口 $port 仍被占用"
   fi

@@ -9,6 +9,7 @@
 @if not exist "server\data\log" mkdir "server\data\log"
 @set "LOG_FILE=server\data\log\start.log"
 
+@call :read_config
 @call :prepare 1>>"%LOG_FILE%" 2>&1
 @if errorlevel 1 (
   echo.
@@ -19,14 +20,15 @@
 )
 
 echo.
-echo   正在启动，稍后浏览器会自动打开：http://127.0.0.1:%API_PORT%/
+echo   正在启动，稍后浏览器会自动打开：http://%BIND_HOST%:%PORT%/
 echo   启动器日志：%CD%\%LOG_FILE%
 echo.
 
-@if /i "%MODE%"=="nosign"   set "PORT=%API_PORT%"
-@if /i "%MODE%"=="signonly" set "SIGN_PORT=%SIGN_PORT%"
+@set "JAR_ARGS="
+@if /i "%MODE%"=="nosign"   set "JAR_ARGS=--no-sign"
+@if /i "%MODE%"=="signonly" set "JAR_ARGS=--sign-only"
 
-@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar --port %SIGN_PORT%
+@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar %JAR_ARGS% --port %SIGN_PORT%
 @set "RC=%ERRORLEVEL%"
 @>>"%LOG_FILE%" echo [%DATE% %TIME%] ===== start.bat 结束（exit=%RC%）=====
 @if not "%RC%"=="0" (
@@ -39,6 +41,59 @@ echo.
 echo.
 echo   服务已停止。启动器日志：%LOG_FILE%
 @pause
+@exit /b 0
+
+@rem ============================================================
+@rem 从 server\config\config.json 读配置。
+@rem JAR 侧 Config 类的优先级是「环境变量 > 配置文件」，
+@rem 因此这里把配置项导出成环境变量；用 setx 不行（只对后续新进程生效），
+@rem 直接用 set 才能让本脚本随后启动的 java 子进程继承。
+@rem 仅在变量尚未定义时才给默认值，用户已有的环境变量自然优先。
+@rem ============================================================
+:read_config
+@if not exist "server\config\config.json" (
+  @set "BIND_HOST=127.0.0.1"
+  @set "PORT=8000"
+  @set "SIGN_PORT=9099"
+  @set "OPEN_BROWSER=1"
+  @exit /b 0
+)
+
+@rem -- 监听 IP：api.host -> BIND_HOST
+@if not defined BIND_HOST (
+  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).api.host"`) do @set "BIND_HOST=%%v"
+)
+@if not defined BIND_HOST set "BIND_HOST=127.0.0.1"
+
+@rem -- API 端口：api.port -> PORT
+@if not defined PORT (
+  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).api.port"`) do @set "PORT=%%v"
+)
+@if not defined PORT set "PORT=8000"
+
+@rem -- 签名端口：signer.port -> SIGN_PORT
+@if not defined SIGN_PORT (
+  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).signer.port"`) do @set "SIGN_PORT=%%v"
+)
+@if not defined SIGN_PORT set "SIGN_PORT=9099"
+
+@rem -- 是否启用签名服务：signer.enabled（false => 免签模式）
+@set "SIGN_ENABLED=True"
+@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).signer.enabled"`) do @set "SIGN_ENABLED=%%v"
+
+@rem -- 是否自动打开浏览器：launcher.open_browser
+@set "OPEN_BROWSER=True"
+@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).launcher.open_browser"`) do @set "OPEN_BROWSER=%%v"
+
+@rem -- 未检测到 Java 时是否跳过自动安装：launcher.skip_jre_install
+@set "HG_SKIP_JRE_INSTALL=0"
+@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).launcher.skip_jre_install"`) do @if /i "%%v"=="True" set "HG_SKIP_JRE_INSTALL=1"
 @exit /b 0
 
 :prepare
@@ -85,24 +140,25 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
   echo   [3/4] API 服务 JAR 就绪
 )
 
-@set SIGN_PORT=9099
-@set API_PORT=8000
-@if not "%SIGN_PORT_OVERRIDE%"=="" set SIGN_PORT=%SIGN_PORT_OVERRIDE%
-@if not "%API_PORT_OVERRIDE%"==""  set API_PORT=%API_PORT_OVERRIDE%
+@rem端口与监听 IP 已在 :read_config 从配置文件读入，此处不再硬编码覆盖。
+@rem 环境变量若已设置则沿用（:read_config 只在变量未定义时才给默认值）。
 
 @set MODE=full
+@rem配置文件里 signer.enabled=false 时，默认走免签模式（命令行参数仍可覆盖）
+@if /i "%SIGN_ENABLED%"=="False" set MODE=nosign
 @if /i "%SCRIPT_ARG%"=="--no-sign"   set MODE=nosign
 @if /i "%SCRIPT_ARG%"=="--sign-only" set MODE=signonly
+@if /i "%MODE%"=="nosign" @set "HG_SIGN_ENABLED=0"
 
-@set OPEN_URL=http://127.0.0.1:%API_PORT%/
+@set OPEN_URL=http://%BIND_HOST%:%PORT%/
 @if /i "%MODE%"=="signonly" goto :no_browser
-@if /i "%HG_OPEN_BROWSER%"=="0" goto :no_browser
+@if /i "%OPEN_BROWSER%"=="False" goto :no_browser
 @start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 240;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser
 
 echo   [4/4] 启动参数就绪，交由 hongguo-api.jar 运行
-echo   API 端口 %API_PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
+echo   API 端口 %PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
 @exit /b 0
 
 :ensure_java
@@ -130,14 +186,18 @@ echo   API 端口 %API_PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
   @goto :found_java
 )
 
-@if /i "%HG_SKIP_JRE_INSTALL%"=="1" (
+@if /i "%HG_SKIP_JRE_INSTALL%"=="1" goto :skip_jre_install
+@goto :do_jre_install
+
+:skip_jre_install
   echo.
-  echo   [错误] 未检测到 Java，且已设置 HG_SKIP_JRE_INSTALL=1 跳过自动安装。
+  echo   [错误] 未检测到 Java，且配置为跳过自动安装。
   echo.
   echo   请手动安装 Temurin 17 或更高版本：https://adoptium.net/
   echo   或把 JRE 解压到 jre\（要求 bin\java.exe 存在）。
 @ exit /b 1
-)
+
+:do_jre_install
 
 echo   [未检测到] 本机没有 Java 运行时。
 echo.

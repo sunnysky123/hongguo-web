@@ -5,7 +5,12 @@
 
 @cd /d "%~dp0..\signer"
 
+@rem签名端口跟随 server\config\config.json；命令行参数优先
 @set SIGN_PORT=9099
+@if exist "..\server\config\config.json" (
+  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+  "(Get-Content -Raw '..\server\config\config.json' | ConvertFrom-Json).signer.port"`) do @set SIGN_PORT=%%v
+)
 @if not "%~1"=="" set SIGN_PORT=%~1
 
 echo.

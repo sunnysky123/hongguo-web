@@ -1,0 +1,56 @@
+{
+  "_说明": "hongguo-web 启动配置。改完保存即可生效，无需设置任何环境变量。",
+  "_优先级": "命令行参数 > 环境变量 > 本文件 > 内置默认值。临时覆盖可用环境变量，如 PORT=9000。",
+  "_提示": "查看当前实际生效的配置：java -jar java/dist/hongguo-api.jar --config",
+
+  "api": {
+    "_说明": "API 服务（网页后端）监听设置",
+    "host": "127.0.0.1",
+    "_host提示": "改成 0.0.0.0 可让局域网内其他设备访问；仅在可信网络下这么做",
+    "port": 8000
+  },
+
+  "signer": {
+    "_说明": "签名服务设置。签名服务是播放视频的必要组件（unidbg）",
+    "enabled": true,
+    "_enabled提示": "设为 false 等价于命令行 --no-sign，仅 API 免签接口可用，无法播放",
+    "port": 9099,
+    "server": "",
+    "_server提示": "留空表示本机自动拉起签名服务。填外部地址如 127.0.0.1:9099 则直接连过去，不在本机启动",
+    "jvm_xmx": "512m",
+    "ready_timeout_ms": 90000
+  },
+
+  "launcher": {
+    "_说明": "启动器自身行为",
+    "open_browser": true,
+    "_open_browser提示": "设为 false 启动后不自动打开浏览器",
+    "skip_jre_install": false,
+    "_skip_jre_install提示": "设为 true 则未检测到 Java 时直接报错，不自动下载安装 JRE"
+  },
+
+  "runtime": {
+    "_说明": "运行时调优参数，通常无需改动",
+    "transcode": false,
+    "_transcode提示": "HEVC 转 H.264。默认关闭；目标机器支持 HEVC 时直出更快，画质无损",
+    "show_metasec": false,
+    "_show_metasec提示": "设为 true 保留 so 内部的 METASEC 告警，便于排查签名问题",
+    "data_dir": "",
+    "_data_dir提示": "留空使用默认 server/data。指定后设备身份、密钥、缓存都会迁到该目录",
+    "device_id": "",
+    "_device_id提示": "留空自动生成。多实例同时跑时给每个实例设不同值，可避免设备身份互撞",
+    "throttle_ms": 260,
+    "_throttle_ms提示": "同一接口两次请求的最小间隔（毫秒），防风控。调大更安全，调小更快",
+    "cache": {
+      "max_files": 30,
+      "_max_files提示": "视频缓存文件数上限",
+      "mem_max": 4096,
+      "mem_max_mb": 128,
+      "img_max_mb": 64,
+      "img_max_kb": 4096
+    },
+    "rate_buckets_max": 4096,
+    "rate_bucket_idle_ms": 600,
+    "sweep_interval_ms": 60
+  }
+}

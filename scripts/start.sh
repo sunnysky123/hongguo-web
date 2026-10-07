@@ -7,8 +7,36 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 MODE="${1:-full}"
-SIGN_PORT="${SIGN_PORT:-9099}"
-API_PORT="${PORT:-8000}"
+
+# ---------- 读配置文件 server/config/config.json ----------
+# 环境变量优先于配置文件；两者都没有才用内置默认值。
+# 没装python3 时整体降级为「只用内置默认值」，不阻塞启动。
+CFG="server/config/config.json"
+HAVE_PY=0
+command -v python3 >/dev/null 2>&1 && HAVE_PY=1
+
+cfg() {  # cfg <点分键> <默认值>
+  [ "$HAVE_PY" = 1 ] || { echo "$2"; return; }
+  [ -f "$CFG" ] || { echo "$2"; return; }
+  python3 - "$CFG" "$1" "$2" <<'PY' 2>/dev/null || echo "$2"
+import json,sys
+d=json.load(open(sys.argv[1],encoding='utf-8'))
+cur=d
+for seg in sys.argv[2].split('.'):
+    if not isinstance(cur,dict) or seg not in cur: print(sys.argv[3]); sys.exit()
+    cur=cur[seg]
+print(sys.argv[3] if cur=='' else cur)
+PY
+}
+
+API_HOST="$(cfg api.host 127.0.0.1)"
+API_PORT="${PORT:-$(cfg api.port 8000)}"
+SIGN_PORT="${SIGN_PORT:-$(cfg signer.port 9099)}"
+SIGN_ENABLED="$(cfg signer.enabled true)"
+OPEN_BROWSER="$(cfg launcher.open_browser true)"
+
+# signer.enabled=false 时默认走免签模式，命令行参数仍可覆盖
+case "$SIGN_ENABLED" in [Ff]alse|[Ff]alse0) MODE="--no-sign" ;; esac
 
 LOG_DIR="server/data/log"
 LOG_FILE="$LOG_DIR/start.log"
@@ -78,7 +106,7 @@ if ! prepare; then
 fi
 
 echo
-echo "  正在启动：http://127.0.0.1:${API_PORT}/"
+echo "  正在启动：http://${API_HOST}:${API_PORT}/"
 echo "  启动器日志：$PWD/$LOG_FILE"
 echo
 
