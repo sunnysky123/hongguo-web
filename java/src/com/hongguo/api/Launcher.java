@@ -256,13 +256,22 @@ public final class Launcher {
     private static void openBrowserWhenReady(int apiPort) {
         final String host = browserHost();
         final String url = "http://" + host + ":" + apiPort + "/ui";
-        final String health = "http://127.0.0.1:" + apiPort + "/health";
+        // 探活地址必须与浏览器地址同源。此前硬编码 127.0.0.1，
+        // 而服务绑定的是 api.host —— 若用户把 api.host 配成局域网 IP，
+        // 服务只在那个 IP 上监听，探 127.0.0.1 永远连不上，
+        // 表现就是"服务正常但浏览器一直不开"。
+        final String health = "http://" + host + ":" + apiPort + "/health";
         Log.info("就绪后自动打开 " + url);
         Thread t = new Thread(() -> {
             long deadline = System.currentTimeMillis() + 90_000L;
             while (System.currentTimeMillis() < deadline) {
                 if (probe(health, 2000)) {
-                    browse(url);
+                    String via = browse(url);
+                    if (via == null) {
+                        Log.warn("未能自动打开浏览器，请手动访问 " + url);
+                    } else {
+                        Log.info("已打开浏览器（" + via + "）");
+                    }
                     return;
                 }
                 try {
@@ -286,29 +295,58 @@ public final class Launcher {
     }
 
     /**
-     * 调起系统默认浏览器。
+     * 调起系统默认浏览器，返回实际生效的方式；全部失败返回 null。
      *
-     * 优先用 Desktop.browse()，它在 Windows 上走 ShellExecute，
-     * 不依赖 rundll32.exe 这个非公开入口。失败时静默：打不开浏览器
-     * 不影响服务本身，用户手动访问即可。
+     * <p>为什么要有兜底、且必须报出结果：此前所有失败路径都是静默的，
+     * 用户只看到"没反应"，无从判断是没装浏览器、AWT 不可用、还是探活
+     * 一直没通过。现在逐级尝试并把结果打出来，一次就能定位。
+     *
+     * <p>Windows 上的取舍：
+     * <ol>
+     *   <li>{@code Desktop.browse()} —— 走 ShellExecute，标准做法；</li>
+     *   <li>{@code explorer.exe <url>} —— Windows 11 上
+     *       {@code rundll32 url.dll,FileProtocolHandler} 这个非公开入口
+     *       常被策略拦截，而 explorer 是同一路径上的稳定入口；</li>
+     *   <li>{@code cmd /c start} —— 兜底。start 后的空引号参数是必需的
+     *       窗口标题，缺了它 URL 里的 {@code &} {@code |} 会被 cmd 当语法解析。</li>
+     * </ol>
+     *
+     * <p>Unix 上用 {@code xdg-open}，且<b>不</b>再传
+     * {@code url.dll,FileProtocolHandler}——那是 Windows 专有参数，
+     * 传给 xdg-open 会被当成文件名，在 Linux/macOS 上必然失败。
      */
-    private static void browse(String url) {
+    private static String browse(String url) {
         try {
-            if (java.awt.Desktop.isDesktopSupported()
-                    && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
-                java.awt.Desktop.getDesktop().browse(java.net.URI.create(url));
-                return;
+            if (java.awt.Desktop.isDesktopSupported()) {
+                java.awt.Desktop d = java.awt.Desktop.getDesktop();
+                if (d.isSupported(java.awt.Desktop.Action.BROWSE)) {
+                    d.browse(java.net.URI.create(url));
+                    return "Desktop.browse";
+                }
             }
-        } catch (Throwable ignored) {
-            // 落到下面的命令行方案
+            Log.info("[browser] Desktop 不可用，改用命令行方式");
+        } catch (Throwable t) {
+            Log.info("[browser] Desktop.browse 失败：" + t + "，改用命令行方式");
         }
         try {
-            new ProcessBuilder(isWindows() ? "rundll32" : "xdg-open", "url.dll,FileProtocolHandler", url)
-                    .start();
+            if (isWindows()) {
+                new ProcessBuilder("explorer.exe", url).start();
+                return "explorer";
+            }
+            new ProcessBuilder("xdg-open", url).start();
+            return "xdg-open";
         } catch (IOException ignored) {
-            // 无图形环境（如 WSL/容器）：提示手动访问即可
-            Log.warn("无法自动打开浏览器，请手动访问 " + url);
+            // 落到下一档
         }
+        try {
+            if (isWindows()) {
+                new ProcessBuilder("cmd", "/c", "start", "", url).start();
+                return "cmd /c start";
+            }
+        } catch (IOException ignored) {
+            // 无图形环境（WSL/容器）：交给调用方提示手动访问
+        }
+        return null;
     }
 
     /**
@@ -639,6 +677,10 @@ public final class Launcher {
      * 之所以过滤而非放任：它每次签名都刷一行，会把真正的错误淹没。
      */
     private static void pipeSigner(InputStream in) {
+        // 解码编码必须与子进程"编码"时用的同一个，否则这里解出来的就是乱码。
+        // 签名服务是另一个 JVM，它的输出同样跟随控制台代码页（中文 Windows
+        // 上就是 GBK），所以这里曾经硬编码 UTF-8，结果把子进程的 GBK 字节
+        // 按 UTF-8 解不出来，输出成一片"锟斤拷"。
         boolean showMetasec = Config.bool("runtime.show_metasec", false);
         try {
             // so 的 stderr 不是按行吐的，而是把一句话拆成若干独立事件
@@ -646,7 +688,7 @@ public final class Launcher {
             // 缓冲，把不完整的尾部留到下一个块再判断，否则会漏出 "[signer] [main" 残片。
             StringBuilder pending = new StringBuilder();
             BufferedReader br = new BufferedReader(
-                    new InputStreamReader(in, StandardCharsets.UTF_8));
+                    new InputStreamReader(in, Log.consoleCharset()));
             int c;
             while ((c = br.read()) >= 0) {
                 pending.append((char) c);
