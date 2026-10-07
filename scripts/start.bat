@@ -1,28 +1,55 @@
-﻿@echo off
-@chcp 65001 >nul 2>&1
+@echo off
 @setlocal DisableDelayedExpansion
-@title 红果短剧 - 网页版
+@title hongguo-web
+
+@rem ================================================================
+@rem This file is deliberately 100% ASCII -- no CJK, no "chcp".
+@rem
+@rem cmd.exe reads a batch file through a fixed-size buffer and tracks
+@rem its position by byte offset. Two things break that bookkeeping:
+@rem   1) a multi-byte character split by the buffer boundary
+@rem   2) "chcp" changing the console code page mid-run, which makes
+@rem      cmd seek with a stale offset
+@rem Either one makes cmd re-read bytes it already consumed, so a line
+@rem prints twice and the command echo leaks back as
+@rem "C:\...>echo." garbage. It is a cmd.exe internal, so it cannot be
+@rem fixed by adding a BOM, rewriting comments or padding offsets.
+@rem
+@rem The fix is structural: cmd never handles CJK here. All Chinese
+@rem text lives in msg.ps1 (UTF-8 with BOM) and is printed by
+@rem PowerShell, which sets the console code page itself and writes the
+@rem bytes in one place. Everything below the "say" helper is ASCII.
+@rem
+@rem msg.ps1 replaces {{placeholders}} from environment variables, so
+@rem no non-ASCII text is ever passed on a command line.
+@rem ================================================================
 
 @cd /d "%~dp0.."
 
 @set "SCRIPT_ARG=%~1"
 @if not exist "server\data\log" mkdir "server\data\log"
 @set "LOG_FILE=server\data\log\start.log"
+@set "HG_LOG_ABS=%CD%\%LOG_FILE%"
+@set "CD=%CD%"
+
+@rem -- Say: print one or more msg.ps1 blocks, then return.
+@rem    Keys are comma separated:  call :say init,start.banner
+@rem    Exit code 2 means the key is unknown, which is a script bug.
+:say
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
+@exit /b %ERRORLEVEL%
+
+@call :say init
 
 @call :read_config
 @call :prepare 1>>"%LOG_FILE%" 2>&1
 @if errorlevel 1 (
-  echo.
-  echo   [启动中止] 详见日志文件：%CD%\%LOG_FILE%
-  echo.
-@ pause
-@ exit /b 1
+  @call :say start.abort
+  @pause
+  @exit /b 1
 )
 
-echo.
-echo   正在启动，稍后浏览器会自动打开：%OPEN_URL%
-echo   启动器日志：%CD%\%LOG_FILE%
-echo.
+@call :say start.banner
 
 @set "JAR_ARGS="
 @if /i "%MODE%"=="nosign"   set "JAR_ARGS=--no-sign"
@@ -30,20 +57,18 @@ echo.
 
 @java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar %JAR_ARGS% --port %SIGN_PORT%
 @set "RC=%ERRORLEVEL%"
-@>>"%LOG_FILE%" echo [%DATE% %TIME%] ===== start.bat 结束（exit=%RC%）=====
+@set "HG_STAMP=%DATE% %TIME%"
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key start.log_tail >>"%LOG_FILE%"
 @if not "%RC%"=="0" (
-  echo.
-  echo   [退出] 服务异常退出（code=%RC%），详见日志：%CD%\%LOG_FILE%
-  echo.
-@ pause
-@ exit /b %RC%
+  @call :say start.exit_err
+  @pause
+  @exit /b %RC%
 )
-echo.
-echo   服务已停止。启动器日志：%LOG_FILE%
+@call :say start.stopped
 @pause
 @exit /b 0
 
-@rem ============================================================
+@rem ================================================================
 @rem Read settings from server\config\config.json.
 @rem JAR-side Config priority is ENV > config file, so we export the
 @rem settings as env vars. setx only affects future processes, so plain
@@ -57,23 +82,16 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @rem    inside an if (...) block", which cmd truncates at the pipe byte.
 @rem    That bug left BIND_HOST/PORT empty, so the URL became
 @rem    http://:/ and the browser never opened.
-@rem
-@rem NOTE: keep every rem comment line pure ASCII. cmd.exe scans a rem
-@rem line byte by byte to find its end; if the console code page and the
-@rem file encoding disagree, a multi-byte sequence can be mistaken for a
-@rem command separator and the tail of the comment gets executed.
-@rem ============================================================
+@rem ================================================================
 :read_config
 @rem -- Save user env var first: HG_OPEN_BROWSER=0 disables auto-open
 @set "HG_OPEN_BROWSER_ENV=%HG_OPEN_BROWSER%"
 @set "HG_CFG_DUMP=%TEMP%\hongguo_cfg_%RANDOM%.txt"
 @powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'HOST=' + $j.api.host; 'PORT=' + $j.api.port; 'SIGN_PORT=' + $j.signer.port; 'SIGN_ENABLED=' + $j.signer.enabled; 'OPEN_BROWSER=' + $j.launcher.open_browser; 'SKIP_JRE=' + $j.launcher.skip_jre_install" > "%HG_CFG_DUMP%" 2>nul
-@rem Dump each key to its own HG_CFG_<KEY> var, one pass, no nested call.
-@rem A "for /f ... do call :sub" inside another call is unsafe here:
-@rem "goto :eof" returns only ONE level, so the call stack gets corrupted
-@rem and control falls through to the echo lines below, which then run
-@rem with echo still on. That printed the prompt + "echo." garbage.
-@rem Writing the var name dynamically keeps this a single flat loop.
+@rem Dump each key to its own HG_CFG_<KEY> var in one flat pass.
+@rem A "for /f ... do call :sub" nested inside another call is unsafe:
+@rem "goto :eof" returns only ONE level, so the call stack gets
+@rem corrupted. Writing the name dynamically keeps it a single loop.
 @if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @set "HG_CFG_%%A=%%B"
 @del /q "%HG_CFG_DUMP%" >nul 2>&1
 @set "HG_CFG_DUMP="
@@ -108,47 +126,41 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @exit /b 0
 
 :prepare
-echo [%DATE% %TIME%] ===== start.bat begin =====
-echo.
-echo   hongguo-web launcher (Windows)
+@set "HG_STAMP=%DATE% %TIME%"
+@call :say start.log_head
+@call :say blank
 
 @call :ensure_java
 @if errorlevel 1 (
-  echo.
-  echo   [错误] Java 运行时不可用，无法继续。
-@ exit /b 1
+  @call :say prepare.no_java
+  @exit /b 1
 )
-echo   [1/4] Java %JAVAVER%（%JAVA_SRC%）
+@echo   [1/4] Java %JAVAVER% (%JAVA_SRC%)
 
 @if not exist "signer\unidbg-sign.jar" (
-  echo.
-  echo   [错误] 缺少 signer\unidbg-sign.jar
-  echo          请确认解压时目录结构完整。
-@ exit /b 1
+  @call :say prepare.no_jar
+  @exit /b 1
 )
 @if not exist "capture\fq_oversea\libmetasec_ml.so"    goto :missing_so
 @if not exist "capture\fq_oversea\libc++_shared.so"    goto :missing_so
 @if not exist "capture\fq_oversea\ms_16777218.bin"      goto :missing_so
-echo   [2/4] 签名资产就绪
+@echo   [2/4] signer assets ready
 @goto :after_so
 
 :missing_so
-echo.
-echo   [错误] 缺少 capture\fq_oversea 下的签名 so 文件
-echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
+@call :say prepare.no_so
 @exit /b 1
 
 :after_so
-@if not exist "java\dist\hongguo-api.jar" (
-  echo   [3/4] 未找到 API 服务 JAR，正在构建...
-@ call "%~dp0build-java.bat"
-@ if errorlevel 1 (
-    echo.
-    echo   [错误] 构建失败，无法启动。
-@   exit /b 1
-  )
+@if exist "java\dist\hongguo-api.jar" (
+  @echo   [3/4] API service JAR ready
 ) else (
-  echo   [3/4] API 服务 JAR 就绪
+  @echo   [3/4] API service JAR missing, building...
+  @call "%~dp0build-java.bat"
+  @if errorlevel 1 (
+    @call :say prepare.build_fail
+    @exit /b 1
+  )
 )
 
 @rem Port and listen IP are already read from the config file in
@@ -173,6 +185,7 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
 
 @rem -- No browser in no-sign / sign-only mode: signonly runs no API
 @rem    service, while nosign is left to the user's choice.
+@set "HG_BROWSER_URL="
 @if /i "%MODE%"=="signonly" goto :no_browser
 @rem -- Normalize the switch: config file gives True/False, an env var
 @rem    may give 0/1/no/off.
@@ -188,7 +201,8 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
 @if /i "%HG_OPEN_BROWSER_ENV%"=="no"      set "HG_OPEN_BROWSER=0"
 @if /i "%HG_OPEN_BROWSER_ENV%"=="off"     set "HG_OPEN_BROWSER=0"
 @if "%HG_OPEN_BROWSER%"=="0" goto :no_browser
-echo   [浏览器] 就绪后自动打开 %OPEN_URL%
+@set "HG_BROWSER_URL=%OPEN_URL%"
+@echo   [browser] will open %OPEN_URL% when ready
 @rem Poll /health until 200, then open the browser: full mode waits for
 @rem unidbg init (10-30s), a fixed delay would hit a blank page.
 @rem 400 tries * (500ms + up to 2s timeout) covers a ~90s init window.
@@ -196,8 +210,8 @@ echo   [浏览器] 就绪后自动打开 %OPEN_URL%
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 400;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser
 
-echo   [4/4] 启动参数就绪，交由 hongguo-api.jar 运行
-echo   API 端口 %PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
+@echo   [4/4] handoff to hongguo-api.jar
+@echo   API port %PORT%   signer port %SIGN_PORT%   mode %MODE%
 @exit /b 0
 
 :ensure_java
@@ -208,7 +222,7 @@ echo   API 端口 %PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
 )
 @if defined BUNDLED_BIN (
   @set "PATH=%BUNDLED_BIN%;%PATH%"
-  @set "JAVA_SRC=项目自带 JRE"
+  @call :say prepare.jre_src_bundled
   @set "JAVA_FROM_BUNDLED=1"
   @goto :found_java
 )
@@ -221,7 +235,7 @@ echo   API 端口 %PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
 
 @where java >nul 2>&1
 @if not errorlevel 1 (
-  @set "JAVA_SRC=系统 PATH"
+  @set "JAVA_SRC=system PATH"
   @goto :found_java
 )
 
@@ -229,27 +243,17 @@ echo   API 端口 %PORT%   签名端口 %SIGN_PORT%   模式 %MODE%
 @goto :do_jre_install
 
 :skip_jre_install
-  echo.
-  echo   [错误] 未检测到 Java，且配置为跳过自动安装。
-  echo.
-  echo   请手动安装 Temurin 17 或更高版本：https://adoptium.net/
-  echo   或把 JRE 解压到 jre\（要求 bin\java.exe 存在）。
-@ exit /b 1
+@call :say prepare.jre_skip
+@exit /b 1
 
 :do_jre_install
-
-echo   [未检测到] 本机没有 Java 运行时。
-echo.
-echo   即将调用 scripts\install-jre.bat 自动安装 Temurin 25 LTS。
-echo.
+@call :say prepare.jre_installing
 @set "HG_ASSUME_YES=1"
 @call "%~dp0install-jre.bat"
 @set "HG_ASSUME_YES="
 @if errorlevel 1 (
-  echo.
-  echo   [错误] Java 安装未完成。
-  echo          也可以手动把 JRE 解压到 jre\（要求 bin\java.exe 存在）。
-@ exit /b 1
+  @call :say prepare.jre_fail
+  @exit /b 1
 )
 
 @set "JAVA_DIR="
@@ -258,17 +262,14 @@ echo.
 @if not defined JAVA_DIR if exist "%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25\bin\java.exe" set "JAVA_DIR=%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25"
 @if defined JAVA_DIR (
   @set "PATH=%JAVA_DIR%\bin;%PATH%"
-  @set "JAVA_SRC=安装目录"
-  echo.
-  echo   已刷新 PATH：%JAVA_DIR%\bin
+  @set "JAVA_SRC=install dir"
+  @call :say prepare.jre_refresh
 )
 
 @where java >nul 2>&1
 @if errorlevel 1 (
-  echo.
-  echo   [错误] 安装后仍未检测到 java.exe。
-  echo          请重新打开命令行窗口后重试，或手动安装：https://adoptium.net/
-@ exit /b 1
+  @call :say prepare.jre_still_missing
+  @exit /b 1
 )
 
 :found_java
@@ -279,17 +280,8 @@ echo.
 @set JAVA_MAJOR=0
 @for /f "tokens=1 delims=." %%m in ("%JAVAVER%") do set "JAVA_MAJOR=%%m"
 @if %JAVA_MAJOR% LSS 17 (
-  echo.
-  echo   [错误] Java 版本过低或无法识别：%JAVAVER%（来源：%JAVA_SRC%）
-  echo          需要 Java 17 或更高版本，推荐 Temurin 25 LTS。
-@ if defined JAVA_FROM_BUNDLED (
-    echo          处理：jre 里的 JRE 版本过低或已损坏，
-    echo                删除 jre 后重跑 scripts\install-jre.bat，
-    echo                或把 Temurin 25 JRE 解压到 jre\ 覆盖（bin\java.exe 必须存在）。
-  ) else (
-    echo          处理：重新运行 scripts\install-jre.bat 覆盖安装，
-    echo                或把 Temurin 25 JRE 解压到 jre\（bin\java.exe 必须存在）。
-  )
-@ exit /b 1
+  @call :say prepare.jre_too_old
+  @call :say prepare.jre_too_old_fix
+  @exit /b 1
 )
 @exit /b 0

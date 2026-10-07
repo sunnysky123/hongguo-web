@@ -1,9 +1,20 @@
-﻿@echo off
-@chcp 65001 >nul 2>&1
+@echo off
 @setlocal DisableDelayedExpansion
-@title unidbg 签名服务
+@title hongguo-web - signer
+
+@rem ================================================================
+@rem Pure ASCII on purpose: see the long note at the top of start.bat.
+@rem All CJK comes from msg.ps1 via the :say helper.
+@rem ================================================================
 
 @cd /d "%~dp0..\signer"
+@set "CD=%CD%"
+
+:say
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
+@exit /b %ERRORLEVEL%
+
+@call :say init
 
 @rem Signer port follows server\config\config.json; CLI arg wins.
 @rem Read it through a temp file instead of "for /f with backticks inside
@@ -18,58 +29,35 @@
 @if not defined SIGN_PORT set "SIGN_PORT=9099"
 @if not "%~1"=="" set SIGN_PORT=%~1
 
-echo.
-echo   ==========================================
-echo     unidbg 签名服务
-echo   ==========================================
-echo.
-
-echo   提示：日常使用不必单独跑本脚本。
-echo         直接双击 scripts\start.bat 会自动拉起签名服务并等待就绪。
-echo         本脚本用于单独调试签名链路，或配合 --sign-only 模式使用。
-echo.
+@call :say sign.banner
+@call :say sign.hint
 
 @set JAVA_BIN=
-@if exist "jre\bin\java.exe" (
-  @set JAVA_BIN=%CD%\jre\bin\java.exe
-  echo   [JRE] 使用项目自带运行时
-  @goto :run
-)
-
+@if exist "jre\bin\java.exe" goto :bundled_jre
 @where java >nul 2>&1
-@if errorlevel 1 (
-  echo   [错误] 未找到 Java 运行时
-  echo.
-  echo   请任选一种方式：
-  echo     1) 把 Windows 版 JRE 解压到项目的 jre\ 目录
-  echo     2) 安装 Temurin 25+ 并加入 PATH：https://adoptium.net/
-  echo.
-  echo   也可直接双击 scripts\install-jre.bat 自动下载安装。
-  echo.
-  @pause
-  @exit /b 1
-)
+@if errorlevel 1 goto :no_java
+@for /f "delims=" %%j in ('where java') do @if not defined JAVA_BIN set "JAVA_BIN=%%j"
+@call :say sign.jre_system
+@goto :run
 
-@for /f "delims=" %%j in ('where java') do (
-  @if not defined JAVA_BIN set JAVA_BIN=%%j
-)
-echo   [JRE] 使用系统 Java：%JAVA_BIN%
+:bundled_jre
+@set "JAVA_BIN=%CD%\jre\bin\java.exe"
+@call :say sign.jre_bundled
+@goto :run
+
+:no_java
+@call :say sign.no_java
+@pause
+@exit /b 1
 
 :run
-echo   [JAR] unidbg-sign.jar
-echo   [端口] %SIGN_PORT%
-echo.
-echo   启动中（unidbg 初始化约需 10-30 秒）...
-echo   停止服务：Ctrl-C 或另开窗口运行 scripts\stop.bat
-echo.
+@call :say sign.run_header
 
 @set JAVA_MAJOR=0
 @for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version \"[0-9]"') do @set "JAVA_MAJOR=%%~v"
 @set "JAVA_MAJOR=%JAVA_MAJOR:v=%"
 @if %JAVA_MAJOR% LSS 17 (
-  echo   [错误] Java 版本过低：%JAVA_MAJOR%
-  echo          签名服务需要 Java 17 或更高版本，推荐 Temurin 25 LTS。
-  echo          请把 JRE 25 解压到 jre\ 覆盖旧目录后重试。
+  @call :say sign.jre_old
   @pause
   @exit /b 1
 )
@@ -84,6 +72,6 @@ echo.
 
 @java --add-opens java.base/java.lang=ALL-UNNAMED %NATIVE_ACCESS% -Xmx512m -cp unidbg-sign.jar com.hongguo.sign.FqTrace serve %SIGN_PORT%
 
-echo.
-echo   签名服务已退出。
+@call :say sign.exited
 @pause
+@exit /b 0

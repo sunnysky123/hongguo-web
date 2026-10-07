@@ -1,87 +1,76 @@
-﻿@echo off
-@chcp 65001 >nul 2>&1
+@echo off
 @setlocal DisableDelayedExpansion
-@title 安装 Java 运行时（签名服务依赖）
+@title hongguo-web - install JRE
+
+@rem ================================================================
+@rem Pure ASCII on purpose: see the long note at the top of start.bat.
+@rem All CJK comes from msg.ps1 via the :say helper.
+@rem ================================================================
 
 @cd /d "%~dp0.."
+@set "CD=%CD%"
+
+:say
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
+@exit /b %ERRORLEVEL%
+
+@call :say init
 
 @set JRE_DIR=%CD%\jre
 @set URL_TEMURIN=https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse
 
-echo.
-echo   ==========================================
-echo     安装 Java 运行时
-echo   ==========================================
-echo.
-echo   签名服务需要 Java 17 或更高版本（推荐 25 LTS）。
-echo.
+@call :say jre.banner
 
 @if exist "%JRE_DIR%\bin\java.exe" (
-  echo   [完成] 项目已自带 Java 运行时：
-  echo          jre\
-  @for /f "tokens=3 delims==" %%v in ('findstr "JAVA_VERSION=" "%JRE_DIR%\release"') do echo          版本 %%v
-  echo.
-  echo   无需安装，可直接运行 scripts\start.bat
-  echo.
+  @call :say jre.have_bundled
   @pause
   @exit /b 0
 )
 
 @where java >nul 2>&1
 @if not errorlevel 1 (
-  echo   [检测到] 系统已安装 Java：
-  @for /f "delims=" %%j in ('where java') do echo          %%j
-  @java -version 2>&1 | findstr /r /c:"version"
-  echo.
-  echo   [完成] 无需安装，可直接运行 scripts\start.bat
-  echo.
+  @call :say jre.have_system
   @pause
   @exit /b 0
 )
 
-echo   [未检测到] 本机没有 Java 运行时。
-echo.
-echo   即将从 Adoptium 官方源下载 Temurin JRE 25 LTS（Windows x64，约 56MB）
-echo   下载地址：
-echo     %URL_TEMURIN%
-echo.
-@set /p ANS="   是否继续？(Y/N) "
-@if /i not "%ANS%"=="Y" (
-  echo   已取消。
-  @pause
-  @exit /b 0
-)
+@call :say jre.need_download
+@if defined HG_ASSUME_YES goto :assume_yes
+@call :say jre.prompt
+@set /p "ANS="
+@if /i "%ANS%"=="Y" goto :download
+@call :say jre.cancelled
+@pause
+@exit /b 0
 
-echo.
-echo   正在下载...
+:assume_yes
+:download
+@call :say jre.downloading
 @powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='Stop';" ^
   "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" ^
   "$ProgressPreference='SilentlyContinue';" ^
+  "$dst='%JRE_DIR%';" ^
   "try {" ^
-  "  New-Item -ItemType Directory -Force -Path '%JRE_DIR%' | Out-Null;" ^
-  "  Write-Host '   正在下载（约 56MB）...';" ^
+  "  New-Item -ItemType Directory -Force -Path $dst | Out-Null;" ^
   "  Invoke-WebRequest -Uri '%URL_TEMURIN%' -OutFile \"$env:TEMP\temurin25-jre.zip\" -UseBasicParsing;" ^
-  "  Write-Host '   下载完成，正在解压...';" ^
+  "  & '%~dp0msg.ps1' -Key jre.extracting;" ^
   "  Expand-Archive -Path \"$env:TEMP\temurin25-jre.zip\" -DestinationPath \"$env:TEMP\temurin-extract\" -Force;" ^
   "  $inner = Get-ChildItem \"$env:TEMP\temurin-extract\" -Directory | Select-Object -First 1;" ^
-  "  Copy-Item -Path (Join-Path $inner.FullName '*') -Destination '%JRE_DIR%' -Recurse -Force;" ^
+  "  Copy-Item -Path (Join-Path $inner.FullName '*') -DestinationPath $dst -Recurse -Force;" ^
   "  Remove-Item \"$env:TEMP\temurin-extract\" -Recurse -Force;" ^
   "  Remove-Item \"$env:TEMP\temurin25-jre.zip\" -Force;" ^
-  "  if (Test-Path '%JRE_DIR%\bin\java.exe') {" ^
-  "    Write-Host '   [完成] Java 运行时已安装到 jre\' -ForegroundColor Green" ^
-  "  } else { Write-Host '   [错误] 解压后未找到 java.exe' -ForegroundColor Red; exit 1 }" ^
-  "} catch { Write-Host ('   [错误] ' + $_.Exception.Message) -ForegroundColor Red; exit 1 }"
+  "  if (Test-Path \"$dst\bin\java.exe\") {" ^
+  "    & '%~dp0msg.ps1' -Key jre.ok" ^
+  "  } else { & '%~dp0msg.ps1' -Key jre.unpack_fail; exit 1 }" ^
+  "} catch { [Console]::Error.WriteLine('   [error] ' + $_.Exception.Message); exit 1 }"
 
-echo.
 @if errorlevel 1 (
-  echo   安装失败。可手动下载后解压到 jre\：
-  echo     https://adoptium.net/temurin/releases/?version=25
-  echo.
+  @call :say jre.fail
   @pause
   @exit /b 1
 )
 
-echo   现在可以运行 scripts\start.bat 启动服务。
-echo.
+@call :say jre.done
 @pause
+@exit /b 0

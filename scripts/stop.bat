@@ -1,29 +1,43 @@
-﻿@echo off
-@chcp 65001 >nul 2>&1
+@echo off
 @setlocal DisableDelayedExpansion
-@title 停止 红果短剧 - 网页版
+@title hongguo-web - stop
+
+@rem ================================================================
+@rem Pure ASCII on purpose: see the long note at the top of start.bat.
+@rem cmd.exe desynchronises its batch read offset on multi-byte bytes
+@rem and on a mid-run "chcp", which duplicates output and leaks the
+@rem command echo. All CJK comes from msg.ps1 via the :say helper.
+@rem ================================================================
 
 @cd /d "%~dp0.."
+@set "CD=%CD%"
 
-echo.
-echo   正在停止相关进程...
-echo.
+:say
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
+@exit /b %ERRORLEVEL%
 
+@call :say init
+@call :say stop.header
+
+@rem -- Kill signer / API processes. PowerShell reports one line per
+@rem    PID into a temp file, and msg.ps1 renders it, so no CJK ever
+@rem    travels on a command line.
+@set "HG_STOPPED=%TEMP%\hongguo_stopped_%RANDOM%.txt"
 @powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='SilentlyContinue';" ^
-  "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" ^
-  "$targets = Get-CimInstance Win32_Process | Where-Object { " ^
+  "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8;" ^
+  "$out=@();" ^
+  "$t = Get-CimInstance Win32_Process | Where-Object { " ^
   "   ($_.Name -eq 'java.exe'  -and ($_.CommandLine -like '*unidbg-sign.jar*' -or $_.CommandLine -like '*hongguo-api.jar*')) -or " ^
   "   ($_.Name -eq 'node.exe'  -and ($_.CommandLine -like '*launcher.js*' -or $_.CommandLine -like '*server\src\server.js*')) " ^
   "};" ^
-  "if ($targets) { $targets | ForEach-Object { " ^
-  "   Write-Host ('   [' + $_.Name.Replace('.exe','') + '] PID ' + $_.ProcessId); " ^
-  "   Stop-Process -Id $_.ProcessId -Force } } " ^
-  "else { Write-Host '   未发现运行中的签名/API 进程' }"
+  "if ($t) { $out = @($t | ForEach-Object { $_.Name.Replace('.exe','') + ' ' + $_.ProcessId }) };" ^
+  "if ($t) { $t | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } };" ^
+  "[IO.File]::WriteAllLines($env:HG_STOPPED, $out, (New-Object Text.UTF8Encoding $false))"
+@call :say stop.killed
+@del /q "%HG_STOPPED%" >nul 2>&1
+@set "HG_STOPPED="
 
-echo.
-echo   [完成] 已停止。
-echo.
+@call :say stop.done
 
 @rem Port detection follows server\config\config.json, so editing the
 @rem config does not leave us probing a stale port.
@@ -45,13 +59,19 @@ echo.
 @if not defined SIGN_PORT set "SIGN_PORT=9099"
 
 @netstat -ano | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% " | findstr "LISTENING" >nul 2>&1
-@if errorlevel 1 (
-  echo   端口 %PORT% / %SIGN_PORT% 已释放。
-) else (
-  echo   [提示] 端口仍被占用，请以管理员身份重试：
-  @netstat -ano | findstr LISTENING | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% "
-)
+@if errorlevel 1 goto :ports_free
+@call :say stop.port_busy
+@set "HG_NETSTAT=%TEMP%\hongguo_netstat_%RANDOM%.txt"
+@netstat -ano | findstr LISTENING | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% " > "%HG_NETSTAT%"
+@call :say stop.netstat
+@del /q "%HG_NETSTAT%" >nul 2>&1
+@set "HG_NETSTAT="
+@goto :ports_done
 
-echo.
+:ports_free
+@call :say stop.port_free
+
+:ports_done
+@call :say blank
 @pause
 @exit /b 0
