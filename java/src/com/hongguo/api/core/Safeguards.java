@@ -35,7 +35,16 @@ public final class Safeguards {
     private static final Map<String, Entry> MEM = java.util.Collections.synchronizedMap(
             new LinkedHashMap<String, Entry>(256, 0.75f, true) {
                 @Override
-                protected boolean removeEldestEntry(Map.Entry<String, Entry> eldest) {
+                protected boolean removeEldestEntry(
+                        java.util.Map.Entry<String, Safeguards.Entry> eldest) {
+                    // 形参里的类型实参必须写 Safeguards.Entry（不能裸写 Entry）：
+                    // 在匿名类体内，简单名 Entry 会按继承规则解析成从 Map 继承
+                    // 来的 java.util.Map.Entry，而不是外层自定义的 Safeguards.Entry，
+                    // 于是形参实际是 Map.Entry<String, Map.Entry>，与父类方法
+                    // removeEldestEntry(Map.Entry<String, Safeguards.Entry>) 擦除相同
+                    // 却不构成重写，直接报 name clash。JDK 25 默认模式碰巧通融，
+                    // 但 --release 17/21（等价于低版本 JDK 编译）必挂。
+                    // 写死 Safeguards.Entry 后，任何 JDK 17+ 都能正常编译。
                     return MEM_TOTAL.get() > MAX_ENTRIES || MEM_BYTES.get() > MAX_BYTES;
                 }
             });
