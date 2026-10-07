@@ -56,5 +56,6 @@ if [ ! -f "$JAR" ]; then
 fi
 
 # ---------- 拉起 ----------
-# -Dstdout/-Dstderr 把 JVM 自身的流钉在 UTF-8，避免中文被按本地编码解码。
-exec "$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" "$@"
+# 不加任何编码参数：JVM 默认已跟随控制台代码页，强行指定 UTF-8 反而会让
+# 控制台按本地编码解码 UTF-8 字节而出现乱码。需要其他编码时设 HG_LOG_ENCODING。
+exec "$JAVA_BIN" -jar "$JAR" "$@"
