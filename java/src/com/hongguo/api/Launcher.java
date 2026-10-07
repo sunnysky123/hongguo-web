@@ -29,16 +29,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * 用法：
  *   java -jar hongguo-api.jar                    # 完整模式（含签名服务）
- *   java -jar hongguo-api.jar --no-sign          # 仅 API（免签列表页）
- *   java -jar hongguo-api.jar --sign-only        # 仅签名服务
- *   java -jar hongguo-api.jar --no-api           # 仅签名服务（同 --sign-only 的显式写法）
- *   java -jar hongguo-api.jar --api-only         # 仅 API，且强制拉起签名服务
  *   java -jar hongguo-api.jar --port 9000        # 指定签名服务端口
  *   java -jar hongguo-api.jar --config           # 打印当前生效配置后退出
+ *   java -jar hongguo-api.jar --stop             # 停掉在跑的实例
  *   java -jar hongguo-api.jar --selftest         # 跑自检
  *
+ * 启停由两个配置项决定，没有命令行开关：
+ *   api.enabled    API 服务（网页后端）是否启动，默认 true
+ *   signer.enabled 签名服务（unidbg）是否启动，默认 true
+ *   两者都为 false 会被拦下并报错退出。
+ *   临时覆盖用环境变量：HG_API_ENABLED=0 / HG_SIGN_ENABLED=0
+ *
  * 配置来源（优先级由高到低）：
- *   命令行参数 &gt; 系统属性 -Dxxx &gt; 环境变量 &gt; server/config/config.json &gt; 内置默认值
+ *   环境变量 &gt; server/config/config.json &gt; 内置默认值
  *   日常改配置请编辑 server/config/config.json，环境变量仅用于临时覆盖。
  *
  * 环境变量（覆盖配置文件用，一般不需要设）：
@@ -46,7 +49,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  *   SIGN_SERVER             显式指定签名服务地址（不启动本地服务）
  *   SIGN_PORT               签名服务端口，默认 9099
  *   PORT / BIND_HOST        API 服务监听，默认 8000 / 127.0.0.1
- *   HG_API_ENABLED=0        不启动 API 服务，只跑签名服务
+ *   HG_API_ENABLED=0        不启动 API 服务
  *   HG_SIGN_ENABLED=0       不启动签名服务，只跑免签 API
  *   SIGN_JVM_XMX            签名服务堆上限，默认 512m
  *   READY_TIMEOUT_MS        签名服务就绪超时，默认 90000（unidbg 初始化较慢）
@@ -70,26 +73,26 @@ public final class Launcher {
     // ==================== 入口 ====================
 
     public static void main(String[] args) throws Exception {
-        boolean noSign = false;
-        boolean signOnly = false;
-        boolean noApi = false;
-        boolean apiOnly = false;
+        // 只有两个开关：API 服务与签名服务，各自独立启停。
+        // 四种组合里「都关」没有意义（没有任何服务在跑），
+        // 在这里就拦掉，不让它走到后面变成进程空转到被 Ctrl-C。
+        boolean apiEnabled = Config.bool("api.enabled", true);
+        boolean signEnabled = Config.bool("signer.enabled", true);
+        if (!apiEnabled && !signEnabled) {
+            Log.info("api.enabled 与 signer.enabled 不能同时为 false。");
+            Log.info("  两者都关意味着没有任何服务运行，进程会空转到被 Ctrl-C。");
+            Log.info("  请至少开启其中一个：");
+            Log.info("    只跑签名服务：api.enabled=false, signer.enabled=true");
+            Log.info("    只跑 API    ：api.enabled=true,  signer.enabled=false（免签，无法播放）");
+            System.exit(1);
+        }
+
         // 配置默认值来自 config.json（环境变量优先级更高，见 Config.str）
         int signPort = Config.num("signer.port", 9099);
-        // 配置里显式关掉签名服务，等价于命令行 --no-sign
-        boolean signDisabledByConfig = !Config.bool("signer.enabled", true);
-        if (signDisabledByConfig) noSign = true;
-        // 配置里显式关掉 API 服务，等价于命令行 --no-api
-        boolean apiDisabledByConfig = !Config.bool("api.enabled", true);
-        if (apiDisabledByConfig) noApi = true;
 
         for (int i = 0; i < args.length; i++) {
             String a = args[i];
-            if (a.equals("--no-sign")) noSign = true;
-            else if (a.equals("--sign-only")) signOnly = true;
-            else if (a.equals("--no-api")) noApi = true;
-            else if (a.equals("--api-only")) apiOnly = true;
-            else if (a.equals("--port") && i + 1 < args.length) {
+            if (a.equals("--port") && i + 1 < args.length) {
                 try {
                     signPort = Integer.parseInt(args[++i]);
                 } catch (NumberFormatException ignored) {
@@ -101,7 +104,7 @@ public final class Launcher {
         // --config：只打印生效配置，不启动任何服务
         for (String a : args) {
             if (a.equals("--config") || a.equals("--show-config")) {
-                printConfig(signPort, noSign, signOnly, noApi, apiOnly);
+                printConfig(signPort);
                 return;
             }
         }
@@ -139,14 +142,7 @@ public final class Launcher {
 
         String signBase = null;
         // 已配置外部签名时不再拉起本地进程
-        // --api-only 强制要求签名服务可用：它的整个意义就是"要 API，
-        // 且要能播放"，此时即便配置里 signer.enabled=false 或命令行
-        // 给了 --no-sign，也应把签名服务拉起来 —— 否则 API 起来了却
-        // 播不了视频，比直接报错更难排查。
-        // --api-only 语义是"只要 API"，因此把 noSign 顶掉，强制拉起签名服务。
-        // 放在配置读取之后、日志之前，使 --api-only 优先于 --no-sign。
-        boolean signOff = noSign && !apiOnly;
-        boolean needLocalSign = !signOff && externalSign.isEmpty();
+        boolean needLocalSign = signEnabled && externalSign.isEmpty();
         AtomicBoolean signStarting = new AtomicBoolean(false);
 
         if (needLocalSign) {
@@ -215,39 +211,15 @@ public final class Launcher {
             while (signBase.endsWith("/")) signBase = signBase.substring(0, signBase.length() - 1);
             Log.info("使用外部签名服务：" + signBase);
         } else {
-            Log.info("--no-sign：仅免签接口可用（推荐/榜单/最新/筛选）");
+            Log.info("signer.enabled=false：仅免签接口可用（推荐/榜单/最新/筛选）");
         }
 
-        if (signOnly) {
-            // --sign-only 与 --no-api 同时出现：两个服务都不启动，
-            // 主流程已无事可做。与其让进程空转到被 Ctrl-C（看起来像卡死），
-            // 不如直接退出并说明原因。
-            if (noApi) {
-                Log.info("--sign-only 与 --no-api 不能同时使用：会没有任何服务运行。");
-                Log.info("  请去掉其中之一：仅签名服务请用 --sign-only，仅 API 请用 --no-sign。");
-                shutdown(children);
-                System.exit(1);
-            }
-            Log.info("签名服务独立运行中：" + signBase);
-            Log.info("  按 Ctrl-C 停止");
-            // 必须阻塞：否则 main 返回后只剩非 daemon 线程撑着 JVM，
-            // 关闭钩子不会触发，签名子进程也不会被收编。
-            awaitShutdown(shuttingDown);
-            shutdown(children);
-            return;
-        }
-
-        // API 服务被显式关闭：签名服务已在上面就绪，这里只保持它运行。
+        // API 服务被配置关闭：签名服务已在上面就绪，这里只保持它运行。
         // 放在设置 SIGN_SERVER 之前 —— 既然本进程不会有 API 服务去消费
         // 这个属性，设了也只是污染环境。
-        if (noApi) {
-            Log.info("API 服务已由配置关闭（api.enabled=false 或 --no-api）");
-            if (signBase == null) {
-                Log.info("  当前也没有签名服务在运行，本次启动不会监听任何端口。");
-                shutdown(children);
-                System.exit(1);
-            }
-            Log.info("仅签名服务运行中：" + signBase);
+        // （两个开关都为 false 的情况已在方法开头拦掉，这里 signBase 必非空。）
+        if (!apiEnabled) {
+            Log.info("api.enabled=false：API 服务未启动，仅签名服务运行：" + signBase);
             Log.info("  按 Ctrl-C 停止");
             awaitShutdown(shuttingDown);
             shutdown(children);
@@ -456,18 +428,19 @@ public final class Launcher {
      * 供用户确认「我改的配置到底生效没有」——排查配置问题时，
      * 比起逐层追问日志，直接看这一段最快。
      */
-    private static void printConfig(int signPort, boolean noSign, boolean signOnly,
-            boolean noApi, boolean apiOnly) {
+    private static void printConfig(int signPort) {
         System.out.println();
-        System.out.println("  生效配置（命令行 > 环境变量 > 配置文件 > 默认值）");
+        System.out.println("  生效配置（环境变量 > 配置文件 > 默认值）");
         System.out.println("  " + "-".repeat(56));
         String src = Config.loadedFrom();
         System.out.printf("    配置文件      : %s%n",
                 src == null ? "未找到（使用内置默认值）" : src);
-        System.out.printf("    api.enabled   : %s%n", Config.bool("api.enabled", true));
+        boolean apiEnabled = Config.bool("api.enabled", true);
+        boolean signEnabled = Config.bool("signer.enabled", true);
+        System.out.printf("    api.enabled   : %s%n", apiEnabled);
         System.out.printf("    api.host       : %s%n", Config.str("api.host", "127.0.0.1"));
         System.out.printf("    api.port       : %d%n", Config.num("api.port", 8000));
-        System.out.printf("    signer.enabled : %s%n", Config.bool("signer.enabled", true));
+        System.out.printf("    signer.enabled : %s%n", signEnabled);
         System.out.printf("    signer.port    : %d%n", signPort);
         String sv = Config.str("signer.server", "");
         System.out.printf("    signer.server  : %s%n", sv.isEmpty() ? "（本机自启）" : sv);
@@ -476,24 +449,11 @@ public final class Launcher {
                 Config.num("signer.ready_timeout_ms", 90000));
         System.out.printf("    transcode      : %s%n", Config.bool("runtime.transcode", false));
         System.out.printf("    show_metasec   : %s%n", Config.bool("runtime.show_metasec", false));
-        System.out.printf("    运行模式       : %s%n", mode(noApi, noSign, signOnly, apiOnly));
+        System.out.printf("    运行模式       : %s%n",
+                !apiEnabled ? "仅签名服务"
+                        : (signEnabled ? "完整" : "仅 API（免签）"));
         System.out.println("  " + "-".repeat(56));
         System.out.println();
-    }
-
-    /**
-     * 把四个开关归一成一句人话，供 --config 展示。
-     *
-     * 单独抽出来是因为「模式」是两维的（API × 签名），
-     * 四个布尔组合出 6 种语义不同的状态，塞进一个三元表达式会读不懂。
-     */
-    private static String mode(boolean noApi, boolean noSign, boolean signOnly,
-            boolean apiOnly) {
-        if (signOnly && noApi) return "无（参数冲突）";
-        if (signOnly) return "仅签名服务";
-        if (noApi) return "仅签名服务（API 已关闭）";
-        if (noSign) return apiOnly ? "仅 API（强制含签名）" : "仅 API（免签）";
-        return "完整";
     }
 
     // ==================== 停止在跑的实例 ====================

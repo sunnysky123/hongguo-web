@@ -44,15 +44,15 @@ ls
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
-| `api.enabled` | `true` | 是否启动 API 服务。设 `false` 等价于 `--no-api`，只跑签名服务、不监听 `api.port` |
+| `api.enabled` | `true` | 是否启动 API 服务。设 `false` 则只跑签名服务、不监听 `api.port` |
 | `api.host` | `127.0.0.1` | 监听地址。改成 `0.0.0.0` 可让局域网其他设备访问 |
 | `api.port` | `8000` | API 服务端口 |
-| `signer.enabled` | `true` | 是否启动签名服务。设 `false` 等价于 `--no-sign`，此时**无法播放** |
+| `signer.enabled` | `true` | 是否启动签名服务。设 `false` 则只跑免签 API，此时**无法播放** |
 | `signer.port` | `9099` | 签名服务端口 |
 | `signer.jvm_xmx` | `512m` | 签名服务堆上限 |
 | `launcher.open_browser` | `true` | 启动后是否自动开浏览器 |
 
-优先级为 **命令行参数 > 环境变量 > 配置文件 > 内置默认值**，
+优先级为 **环境变量 > 配置文件 > 内置默认值**，
 所以临时试一下仍可用环境变量覆盖，例如 `PORT=9000 scripts\start.bat`。
 
 **未安装 Java 时会自动调用 `install-jre.bat` 下载安装 Temurin 25 LTS**
@@ -60,12 +60,19 @@ ls
 若需跳过自动安装（CI / 离线环境），设环境变量 `HG_SKIP_JRE_INSTALL=1`，
 此时只会提示缺失并退出。
 
-其他模式：
+启停就是上面两个配置项，没有额外的命令行开关。四种组合：
 
-    scripts\start.bat --no-sign     仅列表页（免签接口）
-    scripts\start.bat --sign-only   仅签名服务
-    scripts\start.bat --no-api      仅签名服务（api.enabled=false 的显式写法）
-    scripts\start.bat --api-only    仅 API，且强制拉起签名服务
+| api.enabled | signer.enabled | 结果 |
+|---|---|---|
+| true | true | 完整模式（默认） |
+| true | false | 仅 API，免签接口可用，**无法播放** |
+| false | true | 仅签名服务，不监听 `api.port` |
+| false | false | 启动即报错退出（没有任何服务在跑） |
+
+临时覆盖用环境变量：`HG_API_ENABLED=0` 或 `HG_SIGN_ENABLED=0`。
+
+其他命令：
+
     scripts\sign.bat                仅签名服务（端口取自配置）
     scripts\sign.bat --port 9100    仅签名服务并指定端口
     scripts\install-jre.bat         补装 Java 运行时
@@ -75,13 +82,12 @@ ls
 ### Linux / macOS
 
     scripts/start.sh                # 完整（签名 + API）
-    scripts/start.sh --no-sign      # 仅 API
     scripts/stop.sh                 # 停止
 
 ### 免脚本手动方式
 
     java -jar java/dist/hongguo-api.jar                # 完整（自动拉起签名服务）
-    java -jar java/dist/hongguo-api.jar --no-sign      # 仅 API
+    java -jar java/dist/hongguo-api.jar --config       # 查看生效配置
     java -jar java/dist/hongguo-api.jar --selftest     # 跑自检
 
 JAR 不存在时先构建：`bash scripts/build-java.sh`（或 Windows 下双击 `build-java.bat`）。
