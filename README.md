@@ -54,16 +54,17 @@ ls
 优先级为 **命令行参数 > 环境变量 > 配置文件 > 内置默认值**，
 所以临时试一下仍可用环境变量覆盖，例如 `PORT=9000 scripts\start.bat`。
 
-**未安装 Java 时会自动调用 `install-jre.bat` 下载安装 Temurin 25 LTS**，
-装完自动刷新 PATH 并继续启动，无需手工干预。
-若需跳过自动安装（CI / 离线环境），把配置项 `launcher.skip_jre_install` 设为 `true`，
+**未安装 Java 时会自动调用 `install-jre.bat` 下载安装 Temurin 25 LTS**
+（解压到项目的 `jre\` 目录），装完继续启动，无需手工干预。
+若需跳过自动安装（CI / 离线环境），设环境变量 `HG_SKIP_JRE_INSTALL=1`，
 此时只会提示缺失并退出。
 
 其他模式：
 
     scripts\start.bat --no-sign     仅列表页（免签接口）
     scripts\start.bat --sign-only   仅签名服务
-    scripts\sign.bat 9099           仅签名服务并指定端口
+    scripts\sign.bat                仅签名服务（端口取自配置）
+    scripts\sign.bat --port 9100    仅签名服务并指定端口
     scripts\install-jre.bat         补装 Java 运行时
     scripts\build-java.bat          手动构建 API 服务 JAR
     scripts\stop.bat                停止全部服务
