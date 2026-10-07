@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 @chcp 65001 >nul 2>&1
 @setlocal DisableDelayedExpansion
 @title 红果短剧 - 网页版
