@@ -282,11 +282,12 @@ public final class Launcher {
             long deadline = System.currentTimeMillis() + 90_000L;
             while (System.currentTimeMillis() < deadline) {
                 if (probe(health, 2000)) {
-                    String via = browse(url);
-                    if (via == null) {
-                        Log.warn("未能自动打开浏览器，请手动访问 " + url);
+                    String err = browse(url);
+                    if (err == null) {
+                        Log.info("已打开浏览器");
                     } else {
-                        Log.info("已打开浏览器（" + via + "）");
+                        Log.warn("自动打开失败，请手动打开网页：" + url);
+                        Log.info("  原因：" + err);
                     }
                     return;
                 }
@@ -311,58 +312,36 @@ public final class Launcher {
     }
 
     /**
-     * 调起系统默认浏览器，返回实际生效的方式；全部失败返回 null。
+     * 用系统默认浏览器打开 URL。
      *
-     * <p>为什么要有兜底、且必须报出结果：此前所有失败路径都是静默的，
-     * 用户只看到"没反应"，无从判断是没装浏览器、AWT 不可用、还是探活
-     * 一直没通过。现在逐级尝试并把结果打出来，一次就能定位。
+     * <p>只走 {@link java.awt.Desktop}，不降级到 {@code explorer.exe} /
+     * {@code xdg-open} / {@code cmd /c start} 这类命令行方式。
      *
-     * <p>Windows 上的取舍：
-     * <ol>
-     *   <li>{@code Desktop.browse()} —— 走 ShellExecute，标准做法；</li>
-     *   <li>{@code explorer.exe <url>} —— Windows 11 上
-     *       {@code rundll32 url.dll,FileProtocolHandler} 这个非公开入口
-     *       常被策略拦截，而 explorer 是同一路径上的稳定入口；</li>
-     *   <li>{@code cmd /c start} —— 兜底。start 后的空引号参数是必需的
-     *       窗口标题，缺了它 URL 里的 {@code &} {@code |} 会被 cmd 当语法解析。</li>
-     * </ol>
+     * <p>为什么不留命令行兜底：{@code Desktop.browse()} 本身就是平台原生
+     * 入口（Windows 上内部走 ShellExecute，macOS 上走 Launch Services）。
+     * 它失败几乎都不是"缺一条命令"，而是环境根本没有图形会话 ——
+     * 无头容器、WSL、纯 SSH、CI runner。这类环境下再 fork 出 explorer.exe
+     * 或 xdg-open 同样不会成功，只是把"打不开"伪装成"启动了但没反应"，
+     * 反而更难判断。失败就如实告知，让用户自己开。
      *
-     * <p>Unix 上用 {@code xdg-open}，且<b>不</b>再传
-     * {@code url.dll,FileProtocolHandler}——那是 Windows 专有参数，
-     * 传给 xdg-open 会被当成文件名，在 Linux/macOS 上必然失败。
+     * @return 成功返回 null；失败返回原因描述
      */
     private static String browse(String url) {
         try {
-            if (java.awt.Desktop.isDesktopSupported()) {
-                java.awt.Desktop d = java.awt.Desktop.getDesktop();
-                if (d.isSupported(java.awt.Desktop.Action.BROWSE)) {
-                    d.browse(java.net.URI.create(url));
-                    return "Desktop.browse";
-                }
+            if (!java.awt.Desktop.isDesktopSupported()) {
+                return "当前环境不支持 AWT（可能是无图形界面或未安装桌面环境）";
             }
-            Log.info("[browser] Desktop 不可用，改用命令行方式");
+            java.awt.Desktop d = java.awt.Desktop.getDesktop();
+            if (!d.isSupported(java.awt.Desktop.Action.BROWSE)) {
+                return "当前环境不支持 Desktop.BROWSE 动作";
+            }
+            d.browse(java.net.URI.create(url));
+            return null;
         } catch (Throwable t) {
-            Log.info("[browser] Desktop.browse 失败：" + t + "，改用命令行方式");
+            // AWT 在部分平台会抛 HeadlessException / UnsupportedOperationException
+            String msg = t.getMessage();
+            return "AWT 调用失败" + (msg == null || msg.isEmpty() ? "" : "：" + msg);
         }
-        try {
-            if (isWindows()) {
-                new ProcessBuilder("explorer.exe", url).start();
-                return "explorer";
-            }
-            new ProcessBuilder("xdg-open", url).start();
-            return "xdg-open";
-        } catch (IOException ignored) {
-            // 落到下一档
-        }
-        try {
-            if (isWindows()) {
-                new ProcessBuilder("cmd", "/c", "start", "", url).start();
-                return "cmd /c start";
-            }
-        } catch (IOException ignored) {
-            // 无图形环境（WSL/容器）：交给调用方提示手动访问
-        }
-        return null;
     }
 
     /**
