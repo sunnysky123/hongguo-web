@@ -3,152 +3,151 @@
 @title hongguo-web - build
 
 @rem ================================================================
-@rem Pure ASCII on purpose: see the long note at the top of start.bat.
-@rem All CJK comes from msg.ps1.
+@rem  Compile java\src into java\dist\hongguo-api.jar. That is ALL
+@rem  this script does.
 @rem
-@rem Note the second trap documented there: "call :sub <arg>" inside an
-@rem if (...) block loses the argument, so the messages that used to sit
-@rem inside blocks are reached by "goto :say_xxx" instead.
+@rem  Design rule: see the long note at the top of start.bat -- the
+@rem  batch layer stays trivial, 100% ASCII, and free of PowerShell.
+@rem
+@rem  A JDK is required, not just a JRE: javac and jar ship only with
+@rem  the JDK. The release package ships a prebuilt jar, so this is
+@rem  only needed after changing sources.
+@rem
+@rem  Pass -Dxxx=yyy to forward a system property into the running
+@rem  server later; that is only a convenience, nothing reads it here.
 @rem ================================================================
 
 @cd /d "%~dp0.."
-@set "CD=%CD%"
 
-@call :say init
-@goto :main
+set "SRC=java\src"
+set "CLASSES=java\build\classes"
+set "DIST=java\dist"
+set "JAR=java\dist\hongguo-api.jar"
 
-:say
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
-@exit /b %ERRORLEVEL%
+if not exist "%SRC%\com\hongguo\api\Main.java" goto :no_root
 
-:say_no_root
-@call :say build.no_root
-@echo.
-@pause
-@exit /b 1
+@rem --- locate a JDK --------------------------------------------------
+@rem javac and jar are looked up in the same places as java.exe so a
+@rem bundled JDK wins over a stale system one.
+set "JDK_BIN="
+if exist "jre\bin\javac.exe" set "JDK_BIN=jre\bin\"
+if not defined JDK_BIN for /d %%d in ("jre\*") do @if not defined JDK_BIN if exist "%%~fd\bin\javac.exe" set "JDK_BIN=%%~fd\bin\"
+if not defined JDK_BIN if defined JAVA_HOME if exist "%JAVA_HOME%\bin\javac.exe" set "JDK_BIN=%JAVA_HOME%\bin\"
+@rem %%~$dpp already ends with a backslash. If javac.exe is not on PATH
+@rem the modifier leaves the literal name behind, and the exist check
+@rem below turns that into the "no JDK" branch.
+if not defined JDK_BIN for %%p in (javac.exe) do set "JDK_BIN=%%~$dpp"
 
-:say_no_jdk
-@call :say build.no_jdk
-@pause
-@exit /b 1
+if not defined JDK_BIN goto :no_jdk
+if not exist "%JDK_BIN%javac.exe" goto :no_jdk
 
-:say_no_classes
-@call :say build.no_classes
-@pause
-@exit /b 1
+@rem --- 1/2 compile ---------------------------------------------------
+echo.
+echo   [1/2] Compiling...
+if exist "java\build" rmdir /s /q "java\build"
+mkdir "%CLASSES%" 2>nul
+if not exist "%CLASSES%" goto :no_classes
+mkdir "%DIST%" 2>nul
+if not exist "%DIST%" goto :no_dist
 
-:say_no_dist
-@call :say build.no_dist
-@pause
-@exit /b 1
+if exist "%SRC%" for /r "%SRC%" %%f in (*.java) do >>"java\build\sources.txt" echo %%f
+if not exist "java\build\sources.txt" goto :no_sources
 
-:say_no_sources
-@call :say build.no_sources
-@pause
-@exit /b 1
+"%JDK_BIN%javac.exe" -encoding UTF-8 -d "%CLASSES%" @"java\build\sources.txt"
+if errorlevel 1 goto :compile_failed
 
-:say_compile_fail
-@call :say build.compile_fail
-@pause
-@exit /b 1
+@rem --- 2/2 package ---------------------------------------------------
+echo   [2/2] Packaging...
+if exist "java\resources" xcopy /e /i /q /y "java\resources" "%CLASSES%\" >nul
 
-:say_pushd_fail
-@call :say build.pushd_fail
-@pause
-@exit /b 1
-
-:say_jar_fail
-@call :say build.jar_fail
-@pause
-@exit /b 1
-
-:find_jdk
-@set "JAVAC_BIN="
-@set "JDK_BIN="
-@if exist "jre\bin\javac.exe" goto :bundled_jdk
-@for /d %%d in ("jre\*") do @if not defined JAVAC_BIN if exist "%%~fd\bin\javac.exe" set "BUNDLED_JDK=%%~fd"
-@if defined BUNDLED_JDK goto :bundled_jdk_deep
-@if defined JAVA_HOME if exist "%JAVA_HOME%\bin\javac.exe" goto :javahome_jdk
-@where javac >nul 2>&1
-@if errorlevel 1 goto :say_no_jdk
-@for %%i in (javac.exe) do set "JDK_BIN=%%~dp$PATH:i"
-@set "JAVAC_BIN=%JDK_BIN%javac.exe"
-@call :say build.jdk_path
-@exit /b 0
-
-:bundled_jdk
-@set "JAVAC_BIN=%CD%\jre\bin\javac.exe"
-@set "JDK_BIN=%CD%\jre\bin\"
-@call :say build.jdk_bundled
-@exit /b 0
-
-:bundled_jdk_deep
-@set "JAVAC_BIN=%BUNDLED_JDK%\bin\javac.exe"
-@set "JDK_BIN=%BUNDLED_JDK%\bin\"
-@call :say build.jdk_bundled_deep
-@exit /b 0
-
-:javahome_jdk
-@set "JAVAC_BIN=%JAVA_HOME%\bin\javac.exe"
-@set "JDK_BIN=%JAVA_HOME%\bin\"
-@call :say build.jdk_javahome
-@exit /b 0
-
-:main
-@if not exist "java\src\com\hongguo\api\Main.java" goto :say_no_root
-@call :say build.banner
-
-@call :find_jdk
-@if errorlevel 1 exit /b 1
-
-@rem -- From here on the JDK is known good; report a broken javac but go on.
-@"%JAVAC_BIN%" -version 2>&1 | findstr /r "javac" >nul 2>&1
-@if errorlevel 1 @call :say build.javac_warn
-
-@call :say build.step1
-@if exist "java\build" rmdir /s /q "java\build"
-@mkdir "java\build\classes" 2>nul
-@if not exist "java\build\classes" goto :say_no_classes
-@mkdir "java\dist" 2>nul
-@if not exist "java\dist" goto :say_no_dist
-
-@if exist "java\build\sources.txt" del "java\build\sources.txt"
-@for /r "java\src" %%f in (*.java) do >>"java\build\sources.txt" echo %%f
-
-@if not exist "java\build\sources.txt" goto :say_no_sources
-
-@for /f %%c in ('find /v /c "" ^< "java\build\sources.txt"') do set "CNT=%%c"
-@call :say build.cnt
-
-@"%JAVAC_BIN%" -encoding UTF-8 -d "java\build\classes" @"java\build\sources.txt"
-@if errorlevel 1 goto :say_compile_fail
-
-@call :say build.step2
-@if exist "java\resources" xcopy /e /i /q /y "java\resources" "java\build\classes\" >nul
-
-@(
+(
   echo Main-Class: com.hongguo.api.Main
   echo Implementation-Title: hongguo-api
   echo Implementation-Version: 1.0.0
 ) > "java\build\manifest.txt"
 
-@if exist "java\dist\hongguo-api.jar" del "java\dist\hongguo-api.jar"
+if exist "%JAR%" del "%JAR%"
 
-@pushd "java\build\classes"
-@if errorlevel 1 goto :say_pushd_fail
+@rem jar.exe is called from its full path rather than as a bare "jar":
+@rem on a machine with only a JRE on PATH, the bare name would not
+@rem resolve even though we already know where the JDK lives.
+pushd "%CLASSES%"
+if errorlevel 1 goto :no_pushd
+"%JDK_BIN%jar.exe" --create --file "..\..\%JAR%" --manifest "..\manifest.txt" .
+set "RC=%ERRORLEVEL%"
+popd
+if not "%RC%"=="0" goto :jar_failed
 
-@if exist "%JDK_BIN%jar.exe" (
-  @"%JDK_BIN%jar.exe" --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
-) else (
-  @jar --create --file "..\..\java\dist\hongguo-api.jar" --manifest "..\manifest.txt" .
-)
-@set "RC=%ERRORLEVEL%"
-@popd
+for %%f in ("%JAR%") do set "SIZE=%%~zf"
+@rem set /a, not plain set: "set V=1024 / 1024" would store the literal
+@rem text "1024 / 1024" rather than evaluating the division.
+set /a SIZE_KB=%SIZE% / 1024
+echo.
+echo   Built %CD%\%JAR% (%SIZE_KB% KB)
+echo   Start it with scripts\start.bat
+echo.
+pause
+exit /b 0
 
-@if not "%RC%"=="0" goto :say_jar_fail
+@rem --- failure exits -------------------------------------------------
+:no_root
+echo.
+echo   %CD%\%SRC% does not look like the source tree -- Main.java is
+echo   missing. Run this from inside a full copy of the project.
+echo.
+pause
+exit /b 1
 
-@for %%f in ("java\dist\hongguo-api.jar") do set "SIZE=%%~zf"
-@set /a SIZE_KB=%SIZE% / 1024
+:no_jdk
+echo.
+echo   No JDK found on this machine (javac.exe is missing).
+echo   Install Temurin JDK 17+ from https://adoptium.net/ and retry.
+echo   Only a JRE was found, and a JRE cannot compile Java sources.
+echo.
+pause
+exit /b 1
 
-@call :say build.done
-@exit /b 0
+:no_classes
+echo.
+echo   Cannot create %CD%\%CLASSES%
+echo   Check that java\build is writable.
+echo.
+pause
+exit /b 1
+
+:no_dist
+echo.
+echo   Cannot create %CD%\%DIST%
+echo   Check that java\dist is writable.
+echo.
+pause
+exit /b 1
+
+:no_sources
+echo.
+echo   No .java files found under %SRC% -- nothing to compile.
+echo.
+pause
+exit /b 1
+
+:compile_failed
+echo.
+echo   Compilation failed. Errors are listed above.
+echo.
+pause
+exit /b 1
+
+:no_pushd
+echo.
+echo   Cannot enter %CD%\%CLASSES% to package.
+echo.
+pause
+exit /b 1
+
+:jar_failed
+echo.
+echo   Packaging failed. Run scripts\build-java.bat from a terminal
+echo   that shows the full jar output for the reason.
+echo.
+pause
+exit /b 1
