@@ -37,7 +37,7 @@ goto :run
 :run
 @rem --stop always exits 0: "stopped it" and "nothing was running"
 @rem are both normal outcomes of an idempotent stop.
-"%JAVA_BIN%" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "%JAR%" --stop
+"%JAVA_BIN%" -jar "%JAR%" --stop
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto :failed
 echo.
