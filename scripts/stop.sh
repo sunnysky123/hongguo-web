@@ -41,5 +41,5 @@ if [ ! -f "$JAR" ]; then
 fi
 
 # --stop 恒返回 0：「停掉了」与「本来就没在跑」都是幂等停止的正常结局。
-"$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" --stop
+"$JAVA_BIN" -jar "$JAR" --stop
 exit $?
