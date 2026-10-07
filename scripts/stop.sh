@@ -1,58 +1,45 @@
 #!/usr/bin/env bash
-# 停止签名服务与 API 服务（Linux / macOS）
+# ============================================================
+#  停止签名服务与 API 服务（Linux / macOS）
+#
+#  设计原则与 stop.bat 一致：脚本层保持极薄。
+#  进程匹配、端口检查全部交给 Java 侧——它按 jar 路径匹配，
+#  端口则来自 server/config/config.json，脚本不必再解析一遍。
+# ============================================================
 set -uo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-echo
-echo "  正在停止相关进程..."
+JAR="java/dist/hongguo-api.jar"
 
-# 重要：排除自身（$$）与父 shell，否则 pkill -f 会匹配到本脚本的命令行而自杀。
-# 模式后加 [[:space:]] 边界，避免 `hongguo-api.jar` 误匹配 `.jar.bak` 之类。
-SELF=$$
-kill_matching() {
-  local pattern="$1" pid
-  for pid in $(pgrep -f "$pattern" 2>/dev/null || true); do
-    [ "$pid" = "$SELF" ] && continue
-    [ "$pid" = "$PPID" ] && continue
-    # 二次确认该进程命令行确实含目标串（pgrep -f 可能被子进程名误导）
-    if tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -qF "$2"; then
-      echo "   [$3] 已停止 PID $pid"
-      kill "$pid" 2>/dev/null || true
-    fi
+find_java() {
+  local exe="java" d
+  [ -x "jre/bin/$exe" ] && { echo "jre/bin/$exe"; return; }
+  for d in jre/*/; do
+    [ -x "${d}bin/$exe" ] && { echo "${d}bin/$exe"; return; }
   done
+  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/$exe" ] && { echo "$JAVA_HOME/bin/$exe"; return; }
+  command -v "$exe" 2>/dev/null && return
+  echo ""
 }
 
-#迁移后API 服务与签名服务都是 Java 进程，按 jar 路径精确匹配，
-# 避免误杀用户机器上其他 Java 程序。
-kill_matching 'unidbg-sign\.jar'    'unidbg-sign.jar'    signer
-kill_matching 'hongguo-api\.jar'    'hongguo-api.jar'    api
+JAVA_BIN="$(find_java)"
 
-# 兼容旧版 Node 进程（若机器上还留着迁移前启动的服务）
-kill_matching 'scripts/launcher\.js' 'launcher.js'      launcher
-kill_matching 'server/src/server\.js' 'server/src/server.js' api-node
-
-sleep 1
-
-# 端口检测跟随 server/config/config.json
-API_PORT="${PORT:-8000}"
-SIGN_PORT="${SIGN_PORT:-9099}"
-CFG="server/config/config.json"
-if [ -f "$CFG" ]; then
-  read -r A S <<<"$(python3 - "$CFG" <<'PY' 2>/dev/null || true
-import json,sys
-d=json.load(open(sys.argv[1],encoding='utf-8'))
-print(d.get('api',{}).get('port',8000), d.get('signer',{}).get('port',9099))
-PY
-)"
-  [ -n "${A:-}" ] && API_PORT="${PORT:-$A}"
-  [ -n "${S:-}" ] && SIGN_PORT="${SIGN_PORT:-$S}"
+if [ -z "$JAVA_BIN" ]; then
+  echo
+  echo "  未找到 Java 运行时，无法执行停止命令。"
+  echo "  若服务仍在运行，可手动结束：pkill -f 'hongguo-api.jar'"
+  echo
+  exit 1
 fi
 
-for port in "$API_PORT" "$SIGN_PORT"; do
-  if command -v lsof >/dev/null 2>&1 && lsof -ti tcp:"$port" >/dev/null 2>&1; then
-    echo "   [提示] 端口 $port 仍被占用"
-  fi
-done
+if [ ! -f "$JAR" ]; then
+  echo
+  echo "  缺少 $PWD/$JAR"
+  echo "  若服务运行在本项目的另一份拷贝里，请到那份拷贝中停止。"
+  echo
+  exit 1
+fi
 
-echo
-echo "  [完成] 已停止。"
-echo
+# --stop 恒返回 0：「停掉了」与「本来就没在跑」都是幂等停止的正常结局。
+"$JAVA_BIN" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "$JAR" --stop
+exit $?
