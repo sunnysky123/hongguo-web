@@ -154,3 +154,17 @@ vite.config.ts.timestamp-*
 # ---------- Java 后端（Node 已迁移为 Java） ----------
 # 编译中间产物不入库；java/dist/hongguo-api.jar 已入库，clone 后可直接运行
 /java/build/
+
+# pack.sh 的打包产物（5 个平台的发行 zip，约 450MB）落在仓库根的 dist/。
+# 上文第 84 行的 `/dist` 已锚定根目录并覆盖此处，此处补充说明以防误删：
+# 该规则只匹配根目录的 dist/，不会误伤需要入库的 java/dist/。
+/dist/
+
+# ---------- Java 运行时 ----------
+# JRE 不再随仓库入库：仓库体积曾因此达到 296MB，而克隆者多数并不需要它。
+# 发行包由 scripts/pack.sh 动态下载对应平台的 JRE 并打入包内，开箱即用；
+# 从源码运行时则依赖系统 Java，或自行把 JRE 解压到 jre/（启动脚本会自动发现）。
+/jre/
+
+# pack.sh 下载的 JRE 缓存（约 250MB / 5 个平台），纯本地中间产物
+/.pack-cache/

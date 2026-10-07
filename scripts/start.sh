@@ -35,8 +35,11 @@ JAVA_BIN="$(find_java)"
 if [ -z "$JAVA_BIN" ]; then
   echo
   echo "  未找到 Java 运行时。"
-  echo "  安装 Temurin 17+：https://adoptium.net/"
-  echo "  或把 JRE 解压到项目的 jre/ 目录（需要里面有 bin/java）。"
+  echo
+  echo "  发行包自带对应平台的 JRE，正常不会走到这里；"
+  echo "  若你是从源码运行，请任选一种方式："
+  echo "    1) 安装 Temurin 17+：https://adoptium.net/   （推荐）"
+  echo "    2) 把任意 JRE 17+ 解压到项目的 jre/ 目录（需要里面有 bin/java）"
   echo
   exit 1
 fi

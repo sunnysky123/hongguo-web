@@ -54,6 +54,13 @@ echo "        源文件 $COUNT 个"
 
 # ---------- 打包 ----------
 echo "  [2/2] 打包 JAR ..."
+
+# 版本号取自 server/config/config.json，与 --version 显示的保持一致。
+# 读不到时回落到 1.0.0，不让构建因为配置缺失而失败。
+VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$ROOT/server/config/config.json" 2>/dev/null | head -1)
+VERSION="${VERSION:-1.0.0}"
+echo "        版本 $VERSION"
 # 把资源目录（若有）一并拷入
 for d in "$SRC"/../resources; do
   [ -d "$d" ] && cp -r "$d"/. "$BUILD/classes"/
@@ -62,7 +69,7 @@ done
 cat > "$BUILD/manifest.txt" <<EOF
 Main-Class: com.hongguo.api.Main
 Implementation-Title: hongguo-api
-Implementation-Version: 1.0.0
+Implementation-Version: $VERSION
 EOF
 
 rm -f "$JAR"

@@ -21,8 +21,13 @@
 @rem
 @rem  Responsibilities kept here, because they cannot live in Java:
 @rem    1. locate a JRE -- a JVM is needed before any Java code runs
-@rem    2. run install-jre.bat when there is none
-@rem    3. start the jar
+@rem    2. start the jar
+@rem
+@rem  The release package ships a matching JRE, so step 1 normally hits
+@rem  jre\ on the first try. There is no download step: scripts\install-jre.bat
+@rem  used to live here, but packaging now fetches the JRE per platform
+@rem  (see scripts\pack.sh), and a repository checkout no longer carries one.
+@rem  A machine without any Java is told how to fix that and stops.
 @rem
 @rem  Switches are passed straight through to the jar; see --help.
 @rem ================================================================
@@ -66,49 +71,35 @@ echo   Service stopped normally.
 pause
 exit /b 0
 
-@rem --- no JRE: install one, then retry -------------------------------
-@rem HG_SKIP_JRE_INSTALL=1 opts out of the download. This one setting
-@rem stays on the environment rather than in config.json because it
-@rem must be read BEFORE any JVM exists -- a file the JVM would parse
-@rem is no use to a machine that has no Java to read it with.
+@rem --- no JRE: explain how to get one, then stop ----------------------
+@rem This used to shell out to install-jre.bat and retry afterwards.
+@rem That script is gone: the JRE now arrives inside each release package
+@rem (pack.sh fetches the right build per platform), so the only machines
+@rem landing here are source checkouts with no Java at all. Downloading a
+@rem runtime silently from within a launcher is the wrong default -- it
+@rem turns a clear "you are missing Java" into a slow, network-dependent
+@rem failure. So: say what is missing, say how to fix it, stop.
+@rem
+@rem HG_SKIP_JRE_INSTALL is intentionally NOT honoured here. It used to
+@rem suppress the bundled download; with no download to suppress it would
+@rem be a flag that does nothing, so a stale value in the environment
+@rem would read as if it still had meaning.
 :need_jre
-if defined HG_SKIP_JRE_INSTALL goto :install_skipped
 echo.
 echo   No Java runtime found on this machine.
-echo   Running scripts\install-jre.bat to fetch Temurin JRE 25 LTS...
 echo.
-call "%~dp0install-jre.bat"
-if errorlevel 1 goto :install_failed
-@rem install-jre.bat extracted into jre\; re-resolve before retrying.
-set "JAVA_BIN="
-if exist "jre\bin\java.exe" set "JAVA_BIN=%CD%\jre\bin\java.exe"
-if not defined JAVA_BIN for /d %%d in ("jre\*") do @if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
-if not defined JAVA_BIN goto :install_failed
-if not exist "%JAR%" goto :no_jar
-goto :run
-
-:install_skipped
+echo   Release packages include a matching JRE, so this normally means you
+echo   are running from a source checkout. Either:
 echo.
-echo   No Java runtime found, and HG_SKIP_JRE_INSTALL is set, so no
-echo   download was attempted.
+echo     1) Install Temurin 17+ from https://adoptium.net/  ^(recommended^)
+echo     2) Unpack any JRE 17+ into the jre\ folder   ^(needs bin\java.exe^)
 echo.
-echo   Either unset it and run this script again, or install Temurin
-echo   17+ from https://adoptium.net/ , or unpack a JRE into the jre\
-echo   folder by hand (it needs bin\java.exe inside).
+echo   Then run this script again.
 echo.
 pause
 exit /b 1
 
 @rem --- failure exits -------------------------------------------------
-:install_failed
-echo.
-echo   Java runtime is still unavailable, cannot start.
-echo   Install Temurin 17+ from https://adoptium.net/ and retry, or
-echo   unpack a JRE into the jre\ folder (needs bin\java.exe).
-echo.
-pause
-exit /b 1
-
 :no_jar
 echo.
 echo   Missing %CD%\%JAR%

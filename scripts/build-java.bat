@@ -60,10 +60,18 @@ if errorlevel 1 goto :compile_failed
 echo   [2/2] Packaging...
 if exist "java\resources" xcopy /e /i /q /y "java\resources" "%CLASSES%\" >nul
 
+@rem Version comes from server\config\config.json so the jar manifest stays
+@rem in sync with what --version prints. The nested for /f strips the key and
+@rem the surrounding quotes; if anything is missing VERSION stays 1.0.0, so a
+@rem broken config never fails the build.
+@set "VERSION=1.0.0"
+@for /f "tokens=2 delims=:,}" %%v in ('findstr /r /c:"\"version\"" "%ROOT%server\config\config.json" 2^>nul') do @set "VERSION=%%~v"
+echo         version %VERSION%
+
 (
   echo Main-Class: com.hongguo.api.Main
   echo Implementation-Title: hongguo-api
-  echo Implementation-Version: 1.0.0
+  echo Implementation-Version: %VERSION%
 ) > "java\build\manifest.txt"
 
 if exist "%JAR%" del "%JAR%"

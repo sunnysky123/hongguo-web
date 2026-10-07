@@ -13,15 +13,31 @@ git clone https://github.com/sunnysky123/hongguo-web.git
 # https://github.com/sunnysky123/hongguo-web/archive/refs/heads/main.zip
 ```
 
-下载完成后进入目录，确认结构完整：
+下载完成后进入目录，确认结构完整。
+
+下载的是 ZIP 压缩包的话，需要先解压（注意解压后的目录名带 `-main` 后缀）：
+
+```bash
+unzip main.zip
+cd hongguo-web-main
+```
+
+用 `git clone` 克隆的则无需解压，直接进入目录：
 
 ```bash
 cd hongguo-web
+```
+
+确认结构完整：
+
+```bash
 ls
 ```
 
 应能看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、`capture/` 等目录。
-`signer/` 自带了签名服务与 Windows JRE，体积较大，克隆需耐心等待。
+仓库本身不含 Java 运行时（那会让clone 体积从 37MB 涨到 200MB 以上）。
+发行包由 `scripts/pack.sh` 打包，内含对应平台的 Temurin JRE 25，解压即用。
+从源码运行时需要本机已有 Java 17+，或自行把 JRE 解压到 `jre/`（启动脚本会自动发现）。
 
 ---
 
@@ -55,10 +71,10 @@ ls
 优先级为 **环境变量 > 配置文件 > 内置默认值**，
 所以临时试一下仍可用环境变量覆盖，例如 `PORT=9000 scripts\start.bat`。
 
-**未安装 Java 时会自动调用 `install-jre.bat` 下载安装 Temurin 25 LTS**
-（解压到项目的 `jre\` 目录），装完继续启动，无需手工干预。
-若需跳过自动安装（CI / 离线环境），设环境变量 `HG_SKIP_JRE_INSTALL=1`，
-此时只会提示缺失并退出。
+**发行包已内置对应平台的 Temurin JRE 25**，`start.bat` 会优先用它。
+若提示未找到 Java，说明你在跑源码 checkout：装 Temurin 17+，
+或把任意 JRE 17+ 解压到项目的 `jre\` 目录（需含 `bin\java.exe`）再重试。
+`install-jre.bat` 已随该改动移除——运行时由打包阶段按平台准备好。
 
 启停就是上面两个配置项，没有额外的命令行开关。四种组合：
 
@@ -73,7 +89,6 @@ ls
 
 其他命令：
 
-    scripts\install-jre.bat         补装 Java 运行时
     scripts\build-java.bat          手动构建 API 服务 JAR
     scripts\stop.bat                停止全部服务
 
@@ -160,7 +175,7 @@ hongguo-web/
 │   ├── start.bat / start.sh      一键启动（签名 + API）
 │   ├── stop.bat / stop.sh        停止全部服务
 │   ├── build-java.bat / .sh      构建 API 服务 JAR（纯 javac，无需联网）
-│   └── install-jre.bat           补装 Java 运行时
+│   └── pack.sh                   打包 5 个平台发行版（内置 JRE）
 ├── java/
 │   ├── src/com/hongguo/api/      Java 后端源码（19 个文件，零第三方依赖）
 │   │   ├── Main.java             入口
@@ -174,7 +189,7 @@ hongguo-web/
 │   └── build/                    编译中间产物
 ├── signer/
 │   └── unidbg-sign.jar           unidbg 签名服务（跨平台 fat JAR，未改动）
-├── jre/                          自带 Windows JRE 25 LTS（仓库根目录，独立于 signer）
+├── jre/                          Java 运行时（仅发行包内有；仓库不含）
 ├── capture/fq_oversea/           签名算法依赖的 so（路径不可改）
 ├── server/
 │   ├── config/config.json        启动配置（端口、监听地址、签名开关、调优参数）
