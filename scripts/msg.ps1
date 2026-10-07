@@ -22,8 +22,9 @@
 # never has to pass non-ASCII text through the command line.
 
 param(
-  [Parameter(Mandatory = $true, Position = 0)]
-  [string]$Key
+  [Parameter(Position = 0)]
+  [AllowEmptyString()]
+  [string]$Key = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -364,6 +365,14 @@ $blocks = @{
 }
 
 # ---------------------------------------------------------------- output
+#
+# An empty key is tolerated and exits 0 silently. It happens when a
+# "call :say <key>" sits inside an if (...) block: cmd parses the block
+# as one compound command and the subroutine argument is lost, so %~1
+# arrives here empty. The .bat side no longer relies on call inside a
+# block, but failing quietly beats aborting the launcher outright.
+
+if ([string]::IsNullOrWhiteSpace($Key)) { exit 0 }
 
 $out = [Console]::Out
 foreach ($k in ($Key -split ',')) {
