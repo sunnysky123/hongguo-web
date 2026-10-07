@@ -3,84 +3,144 @@
 @title hongguo-web - install JRE
 
 @rem ================================================================
-@rem Pure ASCII on purpose: see the long note at the top of start.bat.
-@rem All CJK comes from msg.ps1.
+@rem  Download and unpack a Temurin JRE into jre\. That is ALL this
+@rem  script does.
 @rem
-@rem Note the second trap documented there: "call :sub <arg>" inside an
-@rem if (...) block loses the argument, so the messages that used to sit
-@rem inside blocks are reached by "goto :say_xxx" instead.
+@rem  Design rule: see the long note at the top of start.bat -- the
+@rem  batch layer stays trivial and 100% ASCII.
+@rem
+@rem  It also uses no PowerShell. PowerShell was the previous home of
+@rem  the Chinese message catalogue (msg.ps1, now deleted) and of the
+@rem  download itself. Both are gone: this file must be able to run on
+@rem  a machine where PowerShell is disabled by policy, since it is
+@rem  the very script you reach for when Java is missing.
+@rem
+@rem  curl.exe and tar.exe both ship with Windows 10 1803 and later.
+@rem  If either is absent we say so plainly rather than falling back
+@rem  to a PowerShell path that may be blocked anyway.
+@rem
+@rem  Set HG_ASSUME_YES=1 to skip the confirmation prompt.
 @rem ================================================================
 
 @cd /d "%~dp0.."
-@set "CD=%CD%"
 
-@set JRE_DIR=%CD%\jre
-@set URL_TEMURIN=https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse
+set "JRE_DIR=%CD%\jre"
+set "ZIP=%TEMP%\temurin-jre-25.zip"
+@rem The adoptium endpoint answers with a redirect to the real file;
+@rem -L follows it, -f fails on an HTTP error instead of writing the
+@rem error page into the zip.
+set "URL_TEMURIN=https://api.adoptium.net/v3/binary/latest/25/ga/windows/x64/jre/hotspot/normal/eclipse"
 
-@call :say init
-@goto :main
+@rem --- already have one? --------------------------------------------
+@rem Nothing to do if either a bundled or a system runtime exists.
+if exist "%JRE_DIR%\bin\java.exe" goto :have_bundled
+where java.exe >nul 2>&1
+if not errorlevel 1 goto :have_system
 
-:say
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
-@exit /b %ERRORLEVEL%
+@rem --- check the tools we need --------------------------------------
+where curl.exe >nul 2>&1
+if errorlevel 1 goto :no_curl
+where tar.exe >nul 2>&1
+if errorlevel 1 goto :no_tar
 
-:say_have_bundled
-@call :say jre.have_bundled
-@pause
-@exit /b 0
-
-:say_have_system
-@call :say jre.have_system
-@pause
-@exit /b 0
-
-:say_cancelled
-@call :say jre.cancelled
-@pause
-@exit /b 0
-
-:say_failed
-@call :say jre.fail
-@pause
-@exit /b 1
-
-:ask
-@call :say jre.need_download
-@if defined HG_ASSUME_YES goto :download
-@call :say jre.prompt
-@set /p "ANS="
-@if /i "%ANS%"=="Y" goto :download
-@goto :say_cancelled
+@rem --- confirm -------------------------------------------------------
+echo.
+echo   No Java runtime found on this machine.
+echo.
+echo   About to download Temurin JRE 25 LTS for Windows x64 (~50 MB)
+echo   from api.adoptium.net and unpack it into:
+echo     %JRE_DIR%
+echo.
+if defined HG_ASSUME_YES goto :download
+echo   Press Ctrl-C to cancel, or Enter to continue...
+set /p "ANS="
+if /i not "%ANS%"=="" goto :cancelled
+goto :download
 
 :download
-@call :say jre.downloading
-@powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop';" ^
-  "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" ^
-  "$ProgressPreference='SilentlyContinue';" ^
-  "$dst='%JRE_DIR%';" ^
-  "try {" ^
-  "  New-Item -ItemType Directory -Force -Path $dst | Out-Null;" ^
-  "  Invoke-WebRequest -Uri '%URL_TEMURIN%' -OutFile \"$env:TEMP\temurin25-jre.zip\" -UseBasicParsing;" ^
-  "  & '%~dp0msg.ps1' -Key jre.extracting;" ^
-  "  Expand-Archive -Path \"$env:TEMP\temurin25-jre.zip\" -DestinationPath \"$env:TEMP\temurin-extract\" -Force;" ^
-  "  $inner = Get-ChildItem \"$env:TEMP\temurin-extract\" -Directory | Select-Object -First 1;" ^
-  "  Copy-Item -Path (Join-Path $inner.FullName '*') -DestinationPath $dst -Recurse -Force;" ^
-  "  Remove-Item \"$env:TEMP\temurin-extract\" -Recurse -Force;" ^
-  "  Remove-Item \"$env:TEMP\temurin25-jre.zip\" -Force;" ^
-  "  if (Test-Path \"$dst\bin\java.exe\") {" ^
-  "    & '%~dp0msg.ps1' -Key jre.ok" ^
-  "  } else { & '%~dp0msg.ps1' -Key jre.unpack_fail; exit 1 }" ^
-  "} catch { [Console]::Error.WriteLine('   [error] ' + $_.Exception.Message); exit 1 }"
-@if errorlevel 1 goto :say_failed
+echo.
+echo   Downloading...
+curl.exe -L -f --progress-bar -o "%ZIP%" "%URL_TEMURIN%"
+if errorlevel 1 goto :download_failed
 
-@call :say jre.done
-@pause
-@exit /b 0
+echo.
+echo   Unpacking...
+@rem --strip-components drops the single top-level directory that the
+@rem Temurin zip always contains, so bin\ lands directly in jre\.
+if exist "%JRE_DIR%" rmdir /s /q "%JRE_DIR%"
+mkdir "%JRE_DIR%" 2>nul
+tar.exe -xf "%ZIP%" -C "%JRE_DIR%" --strip-components 1
+if errorlevel 1 goto :unpack_failed
 
-:main
-@call :say jre.banner
-@if exist "%JRE_DIR%\bin\java.exe" goto :say_have_bundled
-@where java >nul 2>&1
-@if not errorlevel 1 goto :say_have_system
-@goto :ask
+if not exist "%JRE_DIR%\bin\java.exe" goto :unpack_failed
+del /q "%ZIP%" >nul 2>&1
+
+echo.
+echo   Done. Java is ready at:
+echo     %JRE_DIR%\bin\java.exe
+echo.
+pause
+exit /b 0
+
+:download_failed
+echo.
+echo   Download failed. The URL was:
+echo     %URL_TEMURIN%
+echo.
+echo   If you are behind a proxy, download that file manually and unpack
+echo   it into the jre\ folder (needs bin\java.exe inside).
+echo.
+pause
+exit /b 1
+
+:unpack_failed
+echo.
+echo   Unpacking failed -- the archive may be truncated.
+echo   Unpack %ZIP% by hand into the jre\ folder, then retry.
+echo.
+pause
+exit /b 1
+
+:no_curl
+echo.
+echo   curl.exe not found, cannot download.
+echo   Temurin JRE 25 for Windows x64 is at:
+echo     https://adoptium.net/temurin/releases/?version=25
+echo   Unpack it into the jre\ folder (needs bin\java.exe inside).
+echo.
+pause
+exit /b 1
+
+:no_tar
+echo.
+echo   tar.exe not found, cannot unpack the archive.
+echo   Temurin JRE 25 for Windows x64 is at:
+echo     https://adoptium.net/temurin/releases/?version=25
+echo   Unpack it into the jre\ folder (needs bin\java.exe inside).
+echo.
+pause
+exit /b 1
+
+:have_bundled
+echo.
+echo   Already installed: %JRE_DIR%\bin\java.exe
+echo   Nothing to do.
+echo.
+pause
+exit /b 0
+
+:have_system
+echo.
+echo   A Java runtime is already available on this machine, so nothing
+echo   was downloaded.
+echo   To force the bundled copy anyway, unpack Temurin 25 into jre\.
+echo.
+pause
+exit /b 0
+
+:cancelled
+echo.
+echo   Cancelled. Nothing was downloaded.
+echo.
+pause
+exit /b 0
