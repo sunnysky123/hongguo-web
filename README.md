@@ -11,11 +11,11 @@
 
 | 你的系统 | 下载的文件（`1.0.1` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `红果web-1.0.1-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `红果web-1.0.1-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `红果web-1.0.1-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `红果web-1.0.1-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `红果web-1.0.1-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.0.1-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.0.1-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.0.1-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.0.1-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.0.1-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `server/config/config.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -27,7 +27,7 @@
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip 红果web-1.0.1-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.0.1-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -37,7 +37,7 @@ ls
 应看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、`capture/`、
 `jre/` 以及「平台说明.txt」。
 
-* Windows 资源管理器会多套一层 `红果web-1.0.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.0.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。

@@ -104,7 +104,17 @@ if [ -z "$VERSION" ]; then
   exit 1
 fi
 
-PKG_ROOT="红果web-$VERSION"
+# 包名用 ASCII，不含中文。
+#
+# 「红果web-1.0.1-….zip」这个名字在 GitHub 上传后，asset 名会变成
+# 「web-1.0.1-….zip」—— 非 ASCII 前缀被服务端丢掉。这不是 gh 的问题：
+# 实测 gh release create、gh release upload、以及直接调 REST API 并把
+# 中文名 URL 编码后传给 ?name=，三种方式返回的 asset 名都是被剥掉前缀的
+# 版本。客户端绕不过去，所以只能在源头用 ASCII 名。
+#
+# 中文标识没有丢：Release 标题（红果web 1.0.1）与包内「平台说明.txt」
+# 都还带着。
+PKG_ROOT="hongguo-web-$VERSION"
 
 echo "版本: $VERSION   (来自 server/config/config.json)"
 echo "输出: $OUTDIR"
@@ -139,6 +149,7 @@ tar -C "$SRC" -cf - \
   --exclude='./.git' \
   --exclude='./jre' \
   --exclude='./.pack-cache' \
+  --exclude='./dist' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
   --exclude='__pycache__' \

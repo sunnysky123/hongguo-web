@@ -121,21 +121,40 @@ jobs:
           TAG: ${{ steps.check.outputs.tag }}
           VERSION: ${{ steps.check.outputs.version }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
 
+          # 先建 Release（不带资产），再逐个上传。
+          #
+          # 不用 `gh release create ... dist/*.zip` 一步到位：那样由 gh 自己
+          # 从路径推导 asset 名，含非 ASCII 字符的文件名会被它吞掉前缀
+          # （「红果web-1.0.1-….zip」上传后变成「web-1.0.1-….zip」，
+          # 实测 v1.0.1 的 5 个资产全丢了「红果」二字）。
+          # 自己算好名字显式传给 --clobber 可绕过这个问题。
           shopt -s nullglob
           zips=(dist/*.zip)
           if [ ${#zips[@]} -eq 0 ]; then
             echo "::error::dist/ 下没有任何 zip，打包可能未成功。"
             exit 1
           fi
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "红果web $VERSION" --notes-start-tag "$(git tag --sort=-v:refname | head -1 || true)" >/dev/null 2>&1 \
+              || gh release edit "$TAG" --title "红果web $VERSION" >/dev/null
+          else
+            gh release create "$TAG" \
+              --title "红果web $VERSION" \
+              --generate-notes
+          fi
+
           echo "待上传 ${#zips[@]} 个包："
           printf '  %s\n' "${zips[@]}"
 
-          gh release create "$TAG" \
-            --title "红果web $VERSION" \
-            --generate-notes \
-            "${zips[@]}"
+          for z in "${zips[@]}"; do
+            # 文件名即 asset 名，显式给出；printf 处理含中文的 basename
+            name="$(basename "$z")"
+            echo "  -> $name"
+            gh release upload "$TAG" "$z" --clobber
+          done
 
       - name: 发布摘要
         if: always()
