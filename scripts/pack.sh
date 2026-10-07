@@ -6,7 +6,7 @@
 #
 #   bash scripts/pack.sh              含Windows JRE（约 74MB，开箱即用）
 #   bash scripts/pack.sh --no-jre     不含 JRE（约 32MB，需目标机自备 Java 17+，推荐 25 LTS）
-#   bash scripts/pack.sh --sign-only  只打签名服务与脚本
+#   bash scripts/pack.sh --sign-pack  只打签名服务与脚本（不含后端与前端）
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,7 +18,9 @@ ONLY_SIGN=0
 for a in "$@"; do
   case "$a" in
     --no-jre)    WITH_JRE=0 ;;
-    --sign-only) ONLY_SIGN=1 ;;
+    # 叫 --sign-pack 而非 --sign-only：启动器的 --sign-only 已移除，
+    # 同名会让两者被误认为同一个开关
+    --sign-pack) ONLY_SIGN=1 ;;
   esac
 done
 
