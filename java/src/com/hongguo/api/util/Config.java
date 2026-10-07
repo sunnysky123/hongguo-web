@@ -57,7 +57,9 @@ public final class Config {
             Map.entry("signer.ready_timeout_ms", "READY_TIMEOUT_MS"),
             // ---- 启动器行为 ----
             Map.entry("launcher.open_browser", "HG_OPEN_BROWSER"),
-            Map.entry("launcher.skip_jre_install", "HG_SKIP_JRE_INSTALL"),
+            // HG_SKIP_JRE_INSTALL 刻意不在此列：它必须由 start.bat 在 JVM
+            // 启动之前判断，而那时还没有 JVM 能读配置文件，所以只能走
+            // 环境变量。Java 侧不需要、也不应该知道它。
             // ---- 运行时调优 ----
             Map.entry("runtime.transcode", "HG_TRANSCODE"),
             Map.entry("runtime.show_metasec", "HG_SHOW_METASEC"),
