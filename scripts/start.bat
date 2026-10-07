@@ -51,11 +51,14 @@ if not exist "%JAR%" goto :no_jar
 goto :run
 
 @rem --- run ------------------------------------------------------------
-@rem -Dstdout/-Dstderr pin the JVM's own streams to UTF-8; without them a
-@rem Windows console decodes the Chinese output as GBK. The jar also
-@rem calls Log.initEncoding(); this is the belt to that pair of braces.
+@rem No encoding flags here on purpose. A Chinese Windows console runs
+@rem code page 936 (GBK), and the JVM already matches its output to the
+@rem console. Forcing -Dstdout.encoding=UTF-8 makes the JVM emit UTF-8
+@rem bytes that the console then decodes as GBK -- every character turns
+@rem into mojibake such as "Java<EF80><EF80><EF80>re\bin\java.exe".
+@rem Set HG_LOG_ENCODING if some other target needs a specific charset.
 :run
-"%JAVA_BIN%" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "%JAR%" %*
+"%JAVA_BIN%" -jar "%JAR%" %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto :exited
 echo.
