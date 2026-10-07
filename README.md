@@ -73,8 +73,6 @@ ls
 
 其他命令：
 
-    scripts\sign.bat                仅签名服务（端口取自配置）
-    scripts\sign.bat --port 9100    仅签名服务并指定端口
     scripts\install-jre.bat         补装 Java 运行时
     scripts\build-java.bat          手动构建 API 服务 JAR
     scripts\stop.bat                停止全部服务
@@ -155,8 +153,7 @@ hongguo-web/
 │   ├── start.bat / start.sh      一键启动（签名 + API）
 │   ├── stop.bat / stop.sh        停止全部服务
 │   ├── build-java.bat / .sh      构建 API 服务 JAR（纯 javac，无需联网）
-│   ├── install-jre.bat           补装 Java 运行时
-│   └── sign.bat                  仅签名服务（调试用）
+│   └── install-jre.bat           补装 Java 运行时
 ├── java/
 │   ├── src/com/hongguo/api/      Java 后端源码（18 个文件，零第三方依赖）
 │   │   ├── Main.java             入口
