@@ -44,6 +44,7 @@ ls
 
 | 配置项 | 默认值 | 说明 |
 |---|---|---|
+| `api.enabled` | `true` | 是否启动 API 服务。设 `false` 等价于 `--no-api`，只跑签名服务、不监听 `api.port` |
 | `api.host` | `127.0.0.1` | 监听地址。改成 `0.0.0.0` 可让局域网其他设备访问 |
 | `api.port` | `8000` | API 服务端口 |
 | `signer.enabled` | `true` | 是否启动签名服务。设 `false` 等价于 `--no-sign`，此时**无法播放** |
@@ -63,6 +64,8 @@ ls
 
     scripts\start.bat --no-sign     仅列表页（免签接口）
     scripts\start.bat --sign-only   仅签名服务
+    scripts\start.bat --no-api      仅签名服务（api.enabled=false 的显式写法）
+    scripts\start.bat --api-only    仅 API，且强制拉起签名服务
     scripts\sign.bat                仅签名服务（端口取自配置）
     scripts\sign.bat --port 9100    仅签名服务并指定端口
     scripts\install-jre.bat         补装 Java 运行时

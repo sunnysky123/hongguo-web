@@ -47,6 +47,7 @@ public final class Config {
      */
     private static final Map<String, String> ENV_OF = Map.ofEntries(
             // ---- API 服务 ----
+            Map.entry("api.enabled", "HG_API_ENABLED"),
             Map.entry("api.host", "BIND_HOST"),
             Map.entry("api.port", "PORT"),
             // ---- 签名服务 ----
