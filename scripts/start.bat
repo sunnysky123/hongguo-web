@@ -20,7 +20,7 @@
 )
 
 echo.
-echo   正在启动，稍后浏览器会自动打开：http://%BIND_HOST%:%PORT%/
+echo   正在启动，稍后浏览器会自动打开：%OPEN_URL%
 echo   启动器日志：%CD%\%LOG_FILE%
 echo.
 
@@ -48,53 +48,57 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @rem JAR 侧 Config 类的优先级是「环境变量 > 配置文件」，
 @rem 因此这里把配置项导出成环境变量；用 setx 不行（只对后续新进程生效），
 @rem 直接用 set 才能让本脚本随后启动的 java 子进程继承。
-@rem 仅在变量尚未定义时才给默认值，用户已有的环境变量自然优先。
+@rem 仅在变量「未定义或为空」时才采用配置文件值，用户已有的环境变量自然优先。
+@rem
+@rem 只启动一次 PowerShell 把配置一次读全：
+@rem 既省掉 6 次进程启动（各 200~500ms），也避开「括号块里写多行
+@rem for /f + 反引号 + PowerShell 管道」这种会被 cmd 解析截断的写法——
+@rem 那会让 BIND_HOST/PORT 全部读空，URL 变成 http://:/ ，浏览器也永远打不开。
 @rem ============================================================
 :read_config
-@if not exist "server\config\config.json" (
-  @set "BIND_HOST=127.0.0.1"
-  @set "PORT=8000"
-  @set "SIGN_PORT=9099"
-  @set "OPEN_BROWSER=1"
-  @exit /b 0
-)
+@rem -- 先备份用户环境变量：HG_OPEN_BROWSER 文档约定为 0 时关闭自动打开浏览器
+@set "HG_OPEN_BROWSER_ENV=%HG_OPEN_BROWSER%"
+@set "HG_CFG_DUMP=%TEMP%\hongguo_cfg_%RANDOM%.txt"
+@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'HG_HOST=' + $j.api.host; 'HG_PORT=' + $j.api.port; 'HG_SIGN_PORT=' + $j.signer.port; 'HG_SIGN_ENABLED=' + $j.signer.enabled; 'HG_OPEN_BROWSER=' + $j.launcher.open_browser; 'HG_SKIP_JRE=' + $j.launcher.skip_jre_install" > "%HG_CFG_DUMP%" 2>nul
+@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @call :cfg_apply "%%A" "%%B"
+@del /q "%HG_CFG_DUMP%" >nul 2>&1
+@set "HG_CFG_DUMP="
 
 @rem -- 监听 IP：api.host -> BIND_HOST
-@if not defined BIND_HOST (
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).api.host"`) do @set "BIND_HOST=%%v"
-)
+@rem 用「未定义或为空」而不是 if not defined：set "X=" 会把变量置空但仍算已定义，
+@rem 只判 not defined 会漏掉这种情况，URL 就会拼出空 host/port。
+@if not defined BIND_HOST set "BIND_HOST=%HG_CFG_HOST%"
 @if not defined BIND_HOST set "BIND_HOST=127.0.0.1"
 
 @rem -- API 端口：api.port -> PORT
-@if not defined PORT (
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).api.port"`) do @set "PORT=%%v"
-)
+@if not defined PORT set "PORT=%HG_CFG_PORT%"
 @if not defined PORT set "PORT=8000"
 
 @rem -- 签名端口：signer.port -> SIGN_PORT
-@if not defined SIGN_PORT (
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).signer.port"`) do @set "SIGN_PORT=%%v"
-)
+@if not defined SIGN_PORT set "SIGN_PORT=%HG_CFG_SIGN_PORT%"
 @if not defined SIGN_PORT set "SIGN_PORT=9099"
 
 @rem -- 是否启用签名服务：signer.enabled（false => 免签模式）
-@set "SIGN_ENABLED=True"
-@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).signer.enabled"`) do @set "SIGN_ENABLED=%%v"
+@if not defined SIGN_ENABLED set "SIGN_ENABLED=%HG_CFG_SIGN_ENABLED%"
+@if not defined SIGN_ENABLED set "SIGN_ENABLED=True"
 
 @rem -- 是否自动打开浏览器：launcher.open_browser
-@set "OPEN_BROWSER=True"
-@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).launcher.open_browser"`) do @set "OPEN_BROWSER=%%v"
+@if not defined OPEN_BROWSER set "OPEN_BROWSER=%HG_CFG_OPEN_BROWSER%"
+@if not defined OPEN_BROWSER set "OPEN_BROWSER=True"
 
 @rem -- 未检测到 Java 时是否跳过自动安装：launcher.skip_jre_install
 @set "HG_SKIP_JRE_INSTALL=0"
-@for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).launcher.skip_jre_install"`) do @if /i "%%v"=="True" set "HG_SKIP_JRE_INSTALL=1"
+@if /i "%HG_CFG_SKIP_JRE%"=="True" set "HG_SKIP_JRE_INSTALL=1"
 @exit /b 0
+
+:cfg_apply
+@if /i "%~1"=="HG_HOST"         set "HG_CFG_HOST=%~2"
+@if /i "%~1"=="HG_PORT"         set "HG_CFG_PORT=%~2"
+@if /i "%~1"=="HG_SIGN_PORT"    set "HG_CFG_SIGN_PORT=%~2"
+@if /i "%~1"=="HG_SIGN_ENABLED" set "HG_CFG_SIGN_ENABLED=%~2"
+@if /i "%~1"=="HG_OPEN_BROWSER" set "HG_CFG_OPEN_BROWSER=%~2"
+@if /i "%~1"=="HG_SKIP_JRE"     set "HG_CFG_SKIP_JRE=%~2"
+@goto :eof
 
 :prepare
 echo [%DATE% %TIME%] ===== start.bat begin =====
@@ -150,11 +154,32 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
 @if /i "%SCRIPT_ARG%"=="--sign-only" set MODE=signonly
 @if /i "%MODE%"=="nosign" @set "HG_SIGN_ENABLED=0"
 
-@set OPEN_URL=http://%BIND_HOST%:%PORT%/
+@rem -- 浏览器访问地址：监听 0.0.0.0 时浏览器要连回 127.0.0.1，否则打不开
+@set "HG_BROWSER_HOST=%BIND_HOST%"
+@if /i "%HG_BROWSER_HOST%"=="0.0.0.0" set "HG_BROWSER_HOST=127.0.0.1"
+@if /i "%HG_BROWSER_HOST%"=="::"      set "HG_BROWSER_HOST=127.0.0.1"
+@if not defined HG_BROWSER_HOST        set "HG_BROWSER_HOST=127.0.0.1"
+@set "OPEN_URL=http://%HG_BROWSER_HOST%:%PORT%/"
+
+@rem -- 免签/仅签名模式下不开浏览器：signonly 没有 API 服务，nosign 由用户自行决定
 @if /i "%MODE%"=="signonly" goto :no_browser
-@if /i "%OPEN_BROWSER%"=="False" goto :no_browser
+@rem -- 开关归一化：配置文件给的是 True/False，环境变量可能是 0/1/no/off
+@set "HG_OPEN_BROWSER=1"
+@if /i "%OPEN_BROWSER%"=="False" set "HG_OPEN_BROWSER=0"
+@if /i "%OPEN_BROWSER%"=="0"     set "HG_OPEN_BROWSER=0"
+@if /i "%OPEN_BROWSER%"=="no"    set "HG_OPEN_BROWSER=0"
+@if /i "%OPEN_BROWSER%"=="off"   set "HG_OPEN_BROWSER=0"
+@rem 文档约定：HG_OPEN_BROWSER=0 可关闭自动打开（环境变量优先于配置文件）
+@if /i "%HG_OPEN_BROWSER_ENV%"=="0"       set "HG_OPEN_BROWSER=0"
+@if /i "%HG_OPEN_BROWSER_ENV%"=="false"   set "HG_OPEN_BROWSER=0"
+@if /i "%HG_OPEN_BROWSER_ENV%"=="no"      set "HG_OPEN_BROWSER=0"
+@if /i "%HG_OPEN_BROWSER_ENV%"=="off"     set "HG_OPEN_BROWSER=0"
+@if "%HG_OPEN_BROWSER%"=="0" goto :no_browser
+echo   [浏览器] 就绪后自动打开 %OPEN_URL%
+@rem 轮询 /health 直到 200 再开浏览器：完整模式要等 unidbg 初始化 10~30 秒，
+@rem 固定延时会开早撞白屏。400 次 * (500ms + 最多 2s 超时) 覆盖 ~90 秒初始化窗口。
 @start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 240;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
+  "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 400;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser
 
 echo   [4/4] 启动参数就绪，交由 hongguo-api.jar 运行

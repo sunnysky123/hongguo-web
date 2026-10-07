@@ -25,15 +25,18 @@ echo.
 echo   [完成] 已停止。
 echo.
 
-@rem端口检测跟随 server\config\config.json，避免改了配置后仍检测旧端口
+@rem端口检测跟随 server\config\config.json，避免改了配置后仍检测旧端口。
+@rem与 start.bat 同样的坑：括号块里不能放多行 for /f + 反引号 + PowerShell 管道，
+@remcmd 会把管道符当块结束符，块被提前截断，PORT/SIGN_PORT 读空。
 @set "PORT=8000"
 @set "SIGN_PORT=9099"
-@if exist "server\config\config.json" (
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).api.port"`) do @set "PORT=%%v"
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json).signer.port"`) do @set "SIGN_PORT=%%v"
-)
+@set "HG_CFG_DUMP=%TEMP%\hongguo_stop_%RANDOM%.txt"
+@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'PORT=' + $j.api.port; 'SIGN_PORT=' + $j.signer.port" > "%HG_CFG_DUMP%" 2>nul
+@for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @call :stop_cfg "%%A" "%%B"
+@del /q "%HG_CFG_DUMP%" >nul 2>&1
+@set "HG_CFG_DUMP="
+@if not defined PORT set "PORT=8000"
+@if not defined SIGN_PORT set "SIGN_PORT=9099"
 
 @netstat -ano | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% " | findstr "LISTENING" >nul 2>&1
 @if errorlevel 1 (
@@ -45,3 +48,9 @@ echo.
 
 echo.
 @pause
+
+@rem 子程序：把 PowerShell 输出的 KEY=VALUE 落到变量
+:stop_cfg
+@if /i "%~1"=="PORT"      set "PORT=%~2"
+@if /i "%~1"=="SIGN_PORT" set "SIGN_PORT=%~2"
+@goto :eof
