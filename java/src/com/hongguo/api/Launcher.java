@@ -151,9 +151,12 @@ public final class Launcher {
                 Log.info("[warn] 无法探测 Java 版本，若签名失败请确认 JRE >= 17");
             }
 
-            signBase = "http://127.0.0.1:" + signPort;
+            // 签名服务固定绑回环地址：它只供本机 API 调用，
+            // 不应跟随api.host 变成对外监听，否则外部流量会打到签名接口上。
+            String signBindHost = "127.0.0.1";
+            signBase = "http://" + signBindHost + ":" + signPort;
             signStarting.set(true);
-            Process proc = startSignService(java.bin, jvmXmx, signPort);
+            Process proc = startSignService(java.bin, jvmXmx, signPort, signBindHost);
             // 登记到子进程列表：Ctrl-C 时由关闭钩子统一收编，避免端口残留
             if (proc != null) children.add(proc);
 
@@ -310,7 +313,8 @@ public final class Launcher {
      *   in a future release" 警告，显式开启可避免未来版本直接失败。
      *   低版本 JRE 不认识这个参数会直接退出，故仅在 >=24 时附加。
      */
-    private static Process startSignService(String javaBin, String jvmXmx, int signPort) {
+    private static Process startSignService(String javaBin, String jvmXmx, int signPort,
+            String signBindHost) {
         Integer major = javaMajor(javaBin);
         List<String> cmd = new ArrayList<>(Arrays.asList(
                 javaBin,
@@ -331,6 +335,14 @@ public final class Launcher {
         // 关键：so 以 ../capture/ 相对路径加载，必须以 signer/ 为工作目录
         pb.directory(SIGN_DIR.toFile());
         pb.redirectErrorStream(true);
+        // 签名服务只供本机 API 调用，固定绑定回环地址。
+        //
+        // 必须在环境里显式覆盖：Pq 不调用 environment() 时子进程会继承父进程
+        // 全部环境变量，而父进程的 BIND_HOST 来自启动脚本的 api.host 配置。
+        // 若用户在配置里把 api.host 设成 0.0.0.0 / 局域网 IP 甚至主机名，
+        // 签名服务会拿它去绑端口，主机名在容器/部分网络环境下解析不了，
+        // 直接抛 Unresolved addressException，服务起不来。
+        pb.environment().put("BIND_HOST", signBindHost);
         try {
             Process p = pb.start();
             // 后台线程转发子进程输出，主线程继续等就绪

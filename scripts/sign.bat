@@ -72,6 +72,10 @@ echo.
 @set NATIVE_ACCESS=
 @if %JAVA_MAJOR% GEQ 24 set NATIVE_ACCESS=--enable-native-access=ALL-UNNAMED
 
+@rem 签名服务固定绑回环地址：它只供本机 API 调用。
+@rem 必须显式覆盖，避免继承外界的 BIND_HOST（可能被设成主机名而解析不了）。
+@set "BIND_HOST=127.0.0.1"
+
 @java --add-opens java.base/java.lang=ALL-UNNAMED %NATIVE_ACCESS% -Xmx512m -cp unidbg-sign.jar com.hongguo.sign.FqTrace serve %SIGN_PORT%
 
 echo.
