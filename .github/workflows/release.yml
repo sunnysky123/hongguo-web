@@ -1,0 +1,149 @@
+# ================================================================
+#  版本号变更时自动打包并发布 Release
+#
+#  触发：main 分支每次 push
+#  逻辑：比较 server/config/config.json 的 version 字段与上一次提交
+#        —— 相同则跳过；不同则跑 scripts/pack.sh 打包 5 个平台的包，
+#           上传到 GitHub Release。
+#
+#  设计要点：
+#   1. 版本号唯一来源是 config.json，workflow 不硬编码任何版本字符串，
+#      与 pack.sh / build-java.sh 共用同一数据源。
+#   2. 首次提交（父提交里还没有 version 字段）视为「有变化」，
+#      否则该项目永远不会产出第一个 Release。
+#   3. 打包需要联网下载 5 份 JRE（约 250MB），故只在版本真的变了时才跑。
+#   4. fetch-depth: 0 —— 需要完整的 git 历史来取上一个提交的内容。
+# ================================================================
+
+name: Release on version change
+
+on:
+  push:
+    branches: [main]
+
+# 打包需要写 dist/、上传 Release 资产，都要求 contents 写权限。
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: 检测版本并发布
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          # 取上一个提交的内容必须要有历史；默认的 depth=1 拿不到 HEAD^。
+          fetch-depth: 0
+
+      - name: 比较版本号
+        id: check
+        run: |
+          set -uo pipefail
+          CFG="server/config/config.json"
+
+          # 用与 pack.sh 完全相同的 sed 表达式，避免两处解析规则漂移。
+          extract_version() {
+            sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" \
+              | head -1
+          }
+
+          NEW="$(extract_version "$CFG")"
+          echo "当前版本: ${NEW:-<未设置>}"
+
+          if [ -z "$NEW" ]; then
+            echo "::error::未能从 $CFG 读到 version 字段，无法判断是否需要发版。"
+            exit 1
+          fi
+
+          # 父提交。首次提交 / 深度为 1 时没有 HEAD^，当作「无历史版本」。
+          PREV=""
+          if git rev-parse --verify --quiet HEAD^ >/dev/null; then
+            PREV="$(git show "HEAD^:$CFG" 2>/dev/null | {
+              extract_version /dev/stdin
+            } || true)"
+          fi
+          echo "上一版本: ${PREV:-<无>}"
+
+          if [ "$NEW" = "$PREV" ]; then
+            echo "版本未变化（$NEW），跳过打包与发布。"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "版本由 '${PREV:-<无>}' 变为 '$NEW'，将打包并发布。"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检查 Release 是否已存在
+        # 仅在版本变化时执行。同一版本重复触发（改代码不改版本号后又推）
+        # 不该覆盖既有 Release —— 产物会与该版本首次发布时不一致。
+        if: steps.check.outputs.changed == 'true'
+        id: exists
+        run: |
+          set -uo pipefail
+          TAG="${{ steps.check.outputs.tag }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::Release $TAG 已存在，跳过本次发布。"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 准备构建环境
+        if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          # 显式装 JDK 25：JAR 由 JDK 25 编译（class 版本 69），
+          # 低版本 javac 编出来的包目标机跑不了。
+          # 不用 apt 的 openjdk-25-jdk-headless —— Ubuntu 24.04 官方源
+          # 里没有这个包名，apt install 会直接失败。
+          distribution: temurin
+          java-version: '25'
+
+      - name: 安装打包依赖
+        if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
+        run: |
+          sudo apt-get update
+          # pack.sh 用 zip 打包、unzip 解压 Windows 的 JRE；
+          # python3 用于解析 Adoptium 返回的 JSON（runner 已自带）。
+          sudo apt-get install -y zip unzip
+
+      - name: 打包 5 个平台
+        if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
+        run: bash scripts/pack.sh
+
+      - name: 上传产物到 Release
+        if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+          VERSION: ${{ steps.check.outputs.version }}
+        run: |
+          set -uo pipefail
+
+          shopt -s nullglob
+          zips=(dist/*.zip)
+          if [ ${#zips[@]} -eq 0 ]; then
+            echo "::error::dist/ 下没有任何 zip，打包可能未成功。"
+            exit 1
+          fi
+          echo "待上传 ${#zips[@]} 个包："
+          printf '  %s\n' "${zips[@]}"
+
+          gh release create "$TAG" \
+            --title "红果web $VERSION" \
+            --generate-notes \
+            "${zips[@]}"
+
+      - name: 发布摘要
+        if: always()
+        run: |
+          if [ "${{ steps.check.outputs.changed }}" != "true" ]; then
+            echo "**未发布**：版本号未变化。"
+          elif [ "${{ steps.exists.outputs.exists }}" = "true" ]; then
+            echo "**未发布**：该版本 Release 已存在。"
+          else
+            echo "**已发布**：${{ steps.check.outputs.tag }} → [查看 Release](${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ steps.check.outputs.tag }})"
+          fi
