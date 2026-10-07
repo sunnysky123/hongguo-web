@@ -1,15 +1,15 @@
-﻿@echo off
-chcp 65001 >nul 2>&1
-setlocal EnableDelayedExpansion
-title 停止 红果短剧 - 网页版
+@echo off
+@chcp 65001 >nul 2>&1
+@setlocal EnableDelayedExpansion
+@title 停止 红果短剧 - 网页版
 
-cd /d "%~dp0.."
+@cd /d "%~dp0.."
 
 echo.
 echo   正在停止相关进程...
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+@powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$ErrorActionPreference='SilentlyContinue';" ^
   "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;" ^
   "$targets = Get-CimInstance Win32_Process | Where-Object { " ^
@@ -25,13 +25,13 @@ echo.
 echo   [完成] 已停止。
 echo.
 
-netstat -ano | findstr /r /c:":8000 " /c:":9099 " | findstr "LISTENING" >nul 2>&1
-if errorlevel 1 (
+@netstat -ano | findstr /r /c:":8000 " /c:":9099 " | findstr "LISTENING" >nul 2>&1
+@if errorlevel 1 (
   echo   端口 8000 / 9099 已释放。
 ) else (
   echo   [提示] 端口仍被占用，请以管理员身份重试：
-  netstat -ano | findstr LISTENING | findstr /r /c:":8000 " /c:":9099 "
+  @netstat -ano | findstr LISTENING | findstr /r /c:":8000 " /c:":9099 "
 )
 
 echo.
-pause
+@pause

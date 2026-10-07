@@ -515,6 +515,47 @@ public final class Stream {
                     },
                     new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
 
+    /** 预热失败后的最大重试次数（不含首次尝试）。 */
+    private static final int PREWARM_MAX_RETRIES = 3;
+
+    /** 两次预热重试之间的间隔（毫秒）。 */
+    private static final long PREWARM_RETRY_DELAY_MS = 500L;
+
+    /**
+     * 预热执行体：失败时按 {@link #PREWARM_MAX_RETRIES} 重试，全数失败才抛出。
+     *
+     * 背景：预热失败多数源于瞬时问题（网络抖动、签名服务短暂不可用、
+     * 视频直链偶发为空），立刻放弃会让一次预热白跑。重试能显著提升成功率。
+     *
+     * 注意 {@code ensureDecrypted} 自带INFLIGHT 去重与 finally 清理，
+     * 失败后 INFLIGHT 已移除条目，重试不会命中上次的残留状态。
+     *
+     * @return 成功时的可播放路径
+     * @throws Exception 全部尝试均失败时，抛出最后一次的异常
+     */
+    private static String prewarmOnce(String vid, String quality) throws Exception {
+        Exception last = null;
+        for (int attempt = 0; attempt <= PREWARM_MAX_RETRIES; attempt++) {
+            if (attempt > 0) {
+                // 重试前稍作等待，给瞬时故障一个恢复窗口
+                try {
+                    Thread.sleep(PREWARM_RETRY_DELAY_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw ie;
+                }
+            }
+            try {
+                return ensureDecrypted(vid, quality);
+            } catch (Exception e) {
+                last = e;
+                Log.warn("预热失败 " + vid + "（第 " + (attempt + 1) + "/"
+                        + (PREWARM_MAX_RETRIES + 1) + " 次尝试）：" + e.getMessage());
+            }
+        }
+        throw last;
+    }
+
     /** 预热：后台触发解密，不阻塞响应。 */
     public static String prewarm(final String vid, final String quality) {
         String hit = cachedPath(vid, quality);
@@ -523,17 +564,19 @@ public final class Stream {
         try {
             PREWARM_POOL.execute(() -> {
                 try {
-                    ensureDecrypted(vid, quality);
+                    prewarmOnce(vid, quality);
                 } catch (Exception e) {
-                    Log.warn("预热失败 " + vid + ": " + e.getMessage());
+                    Log.warn("预热最终失败 " + vid + "：已重试 " + PREWARM_MAX_RETRIES
+                            + " 次仍不成功，" + e.getMessage());
                 }
             });
         } catch (java.util.concurrent.RejectedExecutionException e) {
             // 队列与线程池都满：退化为当前线程同步执行，保证预热仍然生效
             try {
-                ensureDecrypted(vid, quality);
+                prewarmOnce(vid, quality);
             } catch (Exception ex) {
-                Log.warn("预热失败 " + vid + ": " + ex.getMessage());
+                Log.warn("预热最终失败 " + vid + "：已重试 " + PREWARM_MAX_RETRIES
+                        + " 次仍不成功，" + ex.getMessage());
                 return "failed";
             }
         }
@@ -561,8 +604,9 @@ public final class Stream {
      * 上限由 {@code HONGGUO_CACHE_MAX_FILES} 控制，默认 {@value #CACHE_MAX_FILES}；
      * 设为 0 或负数即关闭清理（不限数量）。
      *
-     * 放在 decrypt 落盘**之后**调用：此时 raw/play 才是成品，不会误删半成品。
-     * 全程吞异常——清理失败不该让播放失败。
+     * 放在decrypt 落盘**之后**调用：此时 raw/play 才是成品，不会误删半成品。
+     * 异常全程吞掉——清理失败不该让播放失败；只有失败时才记日志，
+     * 正常清理保持静默（避免每次解密落盘都刷一行）。
      *
      * @return 被删除的文件数
      */
@@ -600,13 +644,12 @@ public final class Stream {
                     Files.deleteIfExists(victim);
                     deleted++;
                 } catch (IOException e) {
-                    // 单个失败不影响其余，照常删
+                    // 单个失败不影响其余，照常删；仅记录，不中断
+                    Log.warn("缓存清理：删除 " + victim.getFileName()
+                            + " 失败：" + e.getMessage());
                 }
             }
-            if (deleted > 0) {
-                Log.info("缓存清理：保留最新 " + limit + " 个，已删除 " + deleted
-                        + " 个最旧文件（上限 " + CACHE_MAX_ENV + "=" + limit + "）");
-            }
+            // 正常清理不打印日志（此前每次清理都会向控制台输出一行）
             return deleted;
         } catch (Exception e) {
             // 清理是尽力而为，失败不应影响播放
