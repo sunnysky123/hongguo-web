@@ -7,14 +7,12 @@
 #   3. core.autocrlf / GUI 工具对文件的改写
 # 因此 -text 之下，仓库里存的字节 = 磁盘上的字节。
 #
-# *.bat 现在是纯 ASCII（无 BOM、无中文），中文文案集中在 msg.ps1。
-# msg.ps1 则是 UTF-8 with BOM —— Windows PowerShell 5.1 靠 BOM 才知道
-# 文件是 UTF-8，没有 BOM 会按 GBK 读，中文全是乱码。所以它同样要
-# -text，既保住 BOM，也保住 CRLF。
+# 所有 bat 现在都是纯 ASCII、无 BOM、不含中文，也不调用 PowerShell。
+# 中文提示全部由 Java 侧输出（Log.initEncoding 锁定 UTF-8），
+# 配置一律读 server/config/config.json，不再有 ps1 消息库。
 # ---------------------------------------------------------------------------
 *.bat -text
 *.cmd -text
-*.ps1 -text
 
 # 二进制资源：禁止任何转换，避免被当成文本处理而损坏
 *.jar binary
