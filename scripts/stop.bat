@@ -27,15 +27,18 @@ echo.
 
 @rem Port detection follows server\config\config.json, so editing the
 @rem config does not leave us probing a stale port.
-@rem Same trap as start.bat: never put a multi-line for /f with
-@rem backticks and a PowerShell pipe inside an if (...) block -- cmd
-@rem takes the pipe byte as the end of the block and truncates it,
-@rem which leaves PORT/SIGN_PORT empty.
-@set "PORT=8000"
-@set "SIGN_PORT=9099"
+@rem Two traps avoided here:
+@rem  1) never put a multi-line for /f with backticks and a PowerShell
+@rem     pipe inside an if (...) block -- cmd takes the pipe byte as the
+@rem     end of the block and truncates it, leaving the ports empty.
+@rem  2) never use "for /f ... do call :sub": a nested call whose "goto :eof"
+@rem     returns only one level corrupts the call stack, and control falls
+@rem     through to the echo lines with echo still on.
+@if not defined PORT set "PORT=8000"
+@if not defined SIGN_PORT set "SIGN_PORT=9099"
 @set "HG_CFG_DUMP=%TEMP%\hongguo_stop_%RANDOM%.txt"
 @powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'PORT=' + $j.api.port; 'SIGN_PORT=' + $j.signer.port" > "%HG_CFG_DUMP%" 2>nul
-@for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @call :stop_cfg "%%A" "%%B"
+@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @set "%%A=%%B"
 @del /q "%HG_CFG_DUMP%" >nul 2>&1
 @set "HG_CFG_DUMP="
 @if not defined PORT set "PORT=8000"
@@ -51,9 +54,4 @@ echo.
 
 echo.
 @pause
-
-@rem Subroutine: turn the KEY=VALUE lines printed by PowerShell into vars
-:stop_cfg
-@if /i "%~1"=="PORT"      set "PORT=%~2"
-@if /i "%~1"=="SIGN_PORT" set "SIGN_PORT=%~2"
-@goto :eof
+@exit /b 0
