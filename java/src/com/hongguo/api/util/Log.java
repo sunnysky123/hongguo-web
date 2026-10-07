@@ -3,6 +3,7 @@ package com.hongguo.api.util;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.io.PrintStream;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -14,26 +15,76 @@ public final class Log {
 
     private static boolean encodingFixed = false;
 
+    /**
+     * 当前控制台实际使用的编码。
+     *
+     * <p>供转发子进程输出时解码用：签名服务是另一个 JVM，它的输出遵循
+     * 与本进程相同的规则（跟随控制台），所以这里解码才能对得上。
+     */
+    private static Charset consoleCharset = Charset.defaultCharset();
+
     private Log() {}
 
+    public static Charset consoleCharset() {
+        return consoleCharset;
+    }
+
     /**
-     * 把标准输出/错误流锁定为 UTF-8（幂等）。
+     * 让日志输出与控制台代码页一致（幂等）。
      *
-     * 背景：JDK 19 起 {@code stdout.encoding} 默认跟随控制台代码页。
-     * 中文Windows 用户的 start.bat 已执行 {@code chcp 65001}（控制台按 UTF-8
-     * 解码），而 JVM 却按 GBK 编码输出，双重编码导致每个汉字重复成
-     * 「红红果果短短剧剧」。本项目所有文本（源码、配置、网页、转发给用户的
-     * 签名日志）都是 UTF-8，输出统一到 UTF-8 才能与控制台解码一致。
+     * <p><b>这里刻意不强制 UTF-8。</b>
      *
-     * 幂等：重复调用只生效一次，避免多次包装。
+     * <p>代价来自一次真实的踩坑：中文Windows 的控制台代码页是 936(GBK)，
+     * 而先前版本把 {@code -Dstdout.encoding=UTF-8} 与本方法强行包装的
+     * UTF-8 叠加，结果 JVM 输出 UTF-8 字节、控制台按 GBK 解码，
+     * 每个汉字都变成「Java锛歫re\bin\java.exe」这种形态：
+     * {@code ：} 的 UTF-8 字节 {@code E3 80 82} 被按 GBK 读成「锛」。
+     *
+     * <p>正确做法是<b>顺着控制台，而不是跟它较劲</b>：
+     * <ul>
+     *   <li>JDK 19+ 的 {@code stdout.encoding} 默认就跟随控制台代码页，
+     *       此时不干预即为正确；</li>
+     *   <li>JDK 17/18 的 {@code System.out} 用 {@code file.encoding}
+     *       （即平台默认，中文 Windows 上本就是 GBK），同样已对齐。</li>
+     * </ul>
+     * 也就是说<b>什么都不做才是对的</b>。本方法只负责两件事：把实际
+     * 生效的编码记下来供转发子进程时复用，以及在用户显式指定
+     * {@code HG_LOG_ENCODING} 时照办。
+     *
+     * <p>需要 UTF-8 时（例如把输出重定向进文件再交给别的工具分析），
+     * 设 {@code HG_LOG_ENCODING=UTF-8} 即可，不必改JVM 参数。
      */
     public static void initEncoding() {
         if (encodingFixed) return;
         encodingFixed = true;
-        System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true,
-                StandardCharsets.UTF_8));
-        System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true,
-                StandardCharsets.UTF_8));
+
+        String forced = env("HG_LOG_ENCODING", null);
+        if (forced != null) {
+            try {
+                Charset cs = Charset.forName(forced);
+                consoleCharset = cs;
+                System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, cs));
+                System.setErr(new PrintStream(new FileOutputStream(FileDescriptor.err), true, cs));
+                return;
+            } catch (Exception e) {
+                // 非法编码名不该拦住启动，退回默认行为
+                System.err.println("[warn] HG_LOG_ENCODING=" + forced + " 不是有效编码名，已忽略");
+            }
+        }
+
+        // 记录 JVM 实际选中的编码，供 pipeSigner 解码子进程输出时对齐。
+        // stdout.encoding 是 JDK 19+ 才有；更早的版本只有 file.encoding。
+        String enc = System.getProperty("stdout.encoding");
+        if (enc == null) enc = System.getProperty("file.encoding");
+        if (enc != null) {
+            try {
+                consoleCharset = Charset.forName(enc);
+            } catch (Exception ignored) {
+                consoleCharset = Charset.defaultCharset();
+            }
+        }
+        // 注意：这里<b>不</b>替换 System.out/err。JVM 当前的实现已经与
+        // 控制台代码页对齐，再包一层反而会把 UTF-8 字节塞进 GBK 控制台。
     }
 
     public static void info(String msg)  { write(System.out, msg, false); }
