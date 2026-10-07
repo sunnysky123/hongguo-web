@@ -25,9 +25,12 @@ echo.
 echo   [完成] 已停止。
 echo.
 
-@rem端口检测跟随 server\config\config.json，避免改了配置后仍检测旧端口。
-@rem与 start.bat 同样的坑：括号块里不能放多行 for /f + 反引号 + PowerShell 管道，
-@remcmd 会把管道符当块结束符，块被提前截断，PORT/SIGN_PORT 读空。
+@rem Port detection follows server\config\config.json, so editing the
+@rem config does not leave us probing a stale port.
+@rem Same trap as start.bat: never put a multi-line for /f with
+@rem backticks and a PowerShell pipe inside an if (...) block -- cmd
+@rem takes the pipe byte as the end of the block and truncates it,
+@rem which leaves PORT/SIGN_PORT empty.
 @set "PORT=8000"
 @set "SIGN_PORT=9099"
 @set "HG_CFG_DUMP=%TEMP%\hongguo_stop_%RANDOM%.txt"
@@ -49,7 +52,7 @@ echo.
 echo.
 @pause
 
-@rem 子程序：把 PowerShell 输出的 KEY=VALUE 落到变量
+@rem Subroutine: turn the KEY=VALUE lines printed by PowerShell into vars
 :stop_cfg
 @if /i "%~1"=="PORT"      set "PORT=%~2"
 @if /i "%~1"=="SIGN_PORT" set "SIGN_PORT=%~2"

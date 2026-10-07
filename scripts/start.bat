@@ -44,19 +44,27 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @exit /b 0
 
 @rem ============================================================
-@rem 从 server\config\config.json 读配置。
-@rem JAR 侧 Config 类的优先级是「环境变量 > 配置文件」，
-@rem 因此这里把配置项导出成环境变量；用 setx 不行（只对后续新进程生效），
-@rem 直接用 set 才能让本脚本随后启动的 java 子进程继承。
-@rem 仅在变量「未定义或为空」时才采用配置文件值，用户已有的环境变量自然优先。
+@rem Read settings from server\config\config.json.
+@rem JAR-side Config priority is ENV > config file, so we export the
+@rem settings as env vars. setx only affects future processes, so plain
+@rem set is required for the java child started later in this script.
+@rem Config values apply only when a var is undefined OR empty, so any
+@rem env var already set by the user keeps priority.
 @rem
-@rem 只启动一次 PowerShell 把配置一次读全：
-@rem 既省掉 6 次进程启动（各 200~500ms），也避开「括号块里写多行
-@rem for /f + 反引号 + PowerShell 管道」这种会被 cmd 解析截断的写法——
-@rem 那会让 BIND_HOST/PORT 全部读空，URL 变成 http://:/ ，浏览器也永远打不开。
+@rem We launch PowerShell exactly once to read everything at once:
+@rem  - saves 6 process spawns (200-500ms each)
+@rem  - avoids "multi-line for /f with backticks and a PowerShell pipe
+@rem    inside an if (...) block", which cmd truncates at the pipe byte.
+@rem    That bug left BIND_HOST/PORT empty, so the URL became
+@rem    http://:/ and the browser never opened.
+@rem
+@rem NOTE: keep every rem comment line pure ASCII. cmd.exe scans a rem
+@rem line byte by byte to find its end; if the console code page and the
+@rem file encoding disagree, a multi-byte sequence can be mistaken for a
+@rem command separator and the tail of the comment gets executed.
 @rem ============================================================
 :read_config
-@rem -- 先备份用户环境变量：HG_OPEN_BROWSER 文档约定为 0 时关闭自动打开浏览器
+@rem -- Save user env var first: HG_OPEN_BROWSER=0 disables auto-open
 @set "HG_OPEN_BROWSER_ENV=%HG_OPEN_BROWSER%"
 @set "HG_CFG_DUMP=%TEMP%\hongguo_cfg_%RANDOM%.txt"
 @powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'HG_HOST=' + $j.api.host; 'HG_PORT=' + $j.api.port; 'HG_SIGN_PORT=' + $j.signer.port; 'HG_SIGN_ENABLED=' + $j.signer.enabled; 'HG_OPEN_BROWSER=' + $j.launcher.open_browser; 'HG_SKIP_JRE=' + $j.launcher.skip_jre_install" > "%HG_CFG_DUMP%" 2>nul
@@ -64,29 +72,31 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @del /q "%HG_CFG_DUMP%" >nul 2>&1
 @set "HG_CFG_DUMP="
 
-@rem -- 监听 IP：api.host -> BIND_HOST
-@rem 用「未定义或为空」而不是 if not defined：set "X=" 会把变量置空但仍算已定义，
-@rem 只判 not defined 会漏掉这种情况，URL 就会拼出空 host/port。
+@rem -- Listen IP: api.host -> BIND_HOST
+@rem Test "undefined OR empty" instead of "if not defined": plain
+@rem 'set "X="' clears a var but it still counts as DEFINED, so
+@rem "if not defined" misses that case and the URL ends up with an
+@rem empty host/port.
 @if not defined BIND_HOST set "BIND_HOST=%HG_CFG_HOST%"
 @if not defined BIND_HOST set "BIND_HOST=127.0.0.1"
 
-@rem -- API 端口：api.port -> PORT
+@rem -- API port: api.port -> PORT
 @if not defined PORT set "PORT=%HG_CFG_PORT%"
 @if not defined PORT set "PORT=8000"
 
-@rem -- 签名端口：signer.port -> SIGN_PORT
+@rem -- Signer port: signer.port -> SIGN_PORT
 @if not defined SIGN_PORT set "SIGN_PORT=%HG_CFG_SIGN_PORT%"
 @if not defined SIGN_PORT set "SIGN_PORT=9099"
 
-@rem -- 是否启用签名服务：signer.enabled（false => 免签模式）
+@rem -- Signer on/off: signer.enabled (false => no-sign mode)
 @if not defined SIGN_ENABLED set "SIGN_ENABLED=%HG_CFG_SIGN_ENABLED%"
 @if not defined SIGN_ENABLED set "SIGN_ENABLED=True"
 
-@rem -- 是否自动打开浏览器：launcher.open_browser
+@rem -- Auto-open browser: launcher.open_browser
 @if not defined OPEN_BROWSER set "OPEN_BROWSER=%HG_CFG_OPEN_BROWSER%"
 @if not defined OPEN_BROWSER set "OPEN_BROWSER=True"
 
-@rem -- 未检测到 Java 时是否跳过自动安装：launcher.skip_jre_install
+@rem -- Skip auto JRE install when Java is missing: launcher.skip_jre_install
 @set "HG_SKIP_JRE_INSTALL=0"
 @if /i "%HG_CFG_SKIP_JRE%"=="True" set "HG_SKIP_JRE_INSTALL=1"
 @exit /b 0
@@ -144,40 +154,47 @@ echo          需要：libmetasec_ml.so / libc++_shared.so / ms_16777218.bin
   echo   [3/4] API 服务 JAR 就绪
 )
 
-@rem端口与监听 IP 已在 :read_config 从配置文件读入，此处不再硬编码覆盖。
-@rem 环境变量若已设置则沿用（:read_config 只在变量未定义时才给默认值）。
+@rem Port and listen IP are already read from the config file in
+@rem :read_config, so do NOT hardcode them again here. An env var that
+@rem is already set is kept as-is (:read_config defaults only undefined).
 
 @set MODE=full
-@rem配置文件里 signer.enabled=false 时，默认走免签模式（命令行参数仍可覆盖）
+@rem signer.enabled=false in config file => default to no-sign mode
+@rem (a CLI argument can still override it)
 @if /i "%SIGN_ENABLED%"=="False" set MODE=nosign
 @if /i "%SCRIPT_ARG%"=="--no-sign"   set MODE=nosign
 @if /i "%SCRIPT_ARG%"=="--sign-only" set MODE=signonly
 @if /i "%MODE%"=="nosign" @set "HG_SIGN_ENABLED=0"
 
-@rem -- 浏览器访问地址：监听 0.0.0.0 时浏览器要连回 127.0.0.1，否则打不开
+@rem -- Browser URL: when listening on 0.0.0.0 the browser must dial
+@rem    127.0.0.1 instead, otherwise the page never loads.
 @set "HG_BROWSER_HOST=%BIND_HOST%"
 @if /i "%HG_BROWSER_HOST%"=="0.0.0.0" set "HG_BROWSER_HOST=127.0.0.1"
 @if /i "%HG_BROWSER_HOST%"=="::"      set "HG_BROWSER_HOST=127.0.0.1"
 @if not defined HG_BROWSER_HOST        set "HG_BROWSER_HOST=127.0.0.1"
 @set "OPEN_URL=http://%HG_BROWSER_HOST%:%PORT%/"
 
-@rem -- 免签/仅签名模式下不开浏览器：signonly 没有 API 服务，nosign 由用户自行决定
+@rem -- No browser in no-sign / sign-only mode: signonly runs no API
+@rem    service, while nosign is left to the user's choice.
 @if /i "%MODE%"=="signonly" goto :no_browser
-@rem -- 开关归一化：配置文件给的是 True/False，环境变量可能是 0/1/no/off
+@rem -- Normalize the switch: config file gives True/False, an env var
+@rem    may give 0/1/no/off.
 @set "HG_OPEN_BROWSER=1"
 @if /i "%OPEN_BROWSER%"=="False" set "HG_OPEN_BROWSER=0"
 @if /i "%OPEN_BROWSER%"=="0"     set "HG_OPEN_BROWSER=0"
 @if /i "%OPEN_BROWSER%"=="no"    set "HG_OPEN_BROWSER=0"
 @if /i "%OPEN_BROWSER%"=="off"   set "HG_OPEN_BROWSER=0"
-@rem 文档约定：HG_OPEN_BROWSER=0 可关闭自动打开（环境变量优先于配置文件）
+@rem Documented contract: HG_OPEN_BROWSER=0 disables auto-open
+@rem (env var takes priority over the config file)
 @if /i "%HG_OPEN_BROWSER_ENV%"=="0"       set "HG_OPEN_BROWSER=0"
 @if /i "%HG_OPEN_BROWSER_ENV%"=="false"   set "HG_OPEN_BROWSER=0"
 @if /i "%HG_OPEN_BROWSER_ENV%"=="no"      set "HG_OPEN_BROWSER=0"
 @if /i "%HG_OPEN_BROWSER_ENV%"=="off"     set "HG_OPEN_BROWSER=0"
 @if "%HG_OPEN_BROWSER%"=="0" goto :no_browser
 echo   [浏览器] 就绪后自动打开 %OPEN_URL%
-@rem 轮询 /health 直到 200 再开浏览器：完整模式要等 unidbg 初始化 10~30 秒，
-@rem 固定延时会开早撞白屏。400 次 * (500ms + 最多 2s 超时) 覆盖 ~90 秒初始化窗口。
+@rem Poll /health until 200, then open the browser: full mode waits for
+@rem unidbg init (10-30s), a fixed delay would hit a blank page.
+@rem 400 tries * (500ms + up to 2s timeout) covers a ~90s init window.
 @start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 400;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
 :no_browser

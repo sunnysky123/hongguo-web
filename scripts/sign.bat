@@ -5,12 +5,17 @@
 
 @cd /d "%~dp0..\signer"
 
-@rem签名端口跟随 server\config\config.json；命令行参数优先
+@rem Signer port follows server\config\config.json; CLI arg wins.
+@rem Read it through a temp file instead of "for /f with backticks inside
+@rem an if (...) block": cmd treats the PowerShell pipe as the end of the
+@rem block and truncates it, leaving SIGN_PORT empty.
 @set SIGN_PORT=9099
-@if exist "..\server\config\config.json" (
-  @for /f "usebackq delims=" %%v in (`powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "(Get-Content -Raw '..\server\config\config.json' | ConvertFrom-Json).signer.port"`) do @set SIGN_PORT=%%v
-)
+@set "HG_CFG_DUMP=%TEMP%\hongguo_sign_%RANDOM%.txt"
+@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw '..\server\config\config.json' | ConvertFrom-Json; 'SIGN_PORT=' + $j.signer.port" > "%HG_CFG_DUMP%" 2>nul
+@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @if /i "%%A"=="SIGN_PORT" set "SIGN_PORT=%%B"
+@del /q "%HG_CFG_DUMP%" >nul 2>&1
+@set "HG_CFG_DUMP="
+@if not defined SIGN_PORT set "SIGN_PORT=9099"
 @if not "%~1"=="" set SIGN_PORT=%~1
 
 echo.
@@ -72,8 +77,9 @@ echo.
 @set NATIVE_ACCESS=
 @if %JAVA_MAJOR% GEQ 24 set NATIVE_ACCESS=--enable-native-access=ALL-UNNAMED
 
-@rem 签名服务固定绑回环地址：它只供本机 API 调用。
-@rem 必须显式覆盖，避免继承外界的 BIND_HOST（可能被设成主机名而解析不了）。
+@rem The signer always binds to the loopback address: it only serves
+@rem the local API. Set it explicitly so an inherited BIND_HOST -- which
+@rem may be a hostname that fails to resolve -- cannot leak in.
 @set "BIND_HOST=127.0.0.1"
 
 @java --add-opens java.base/java.lang=ALL-UNNAMED %NATIVE_ACCESS% -Xmx512m -cp unidbg-sign.jar com.hongguo.sign.FqTrace serve %SIGN_PORT%
