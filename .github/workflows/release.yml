@@ -1,7 +1,7 @@
 # ================================================================
 #  版本号变更时自动打包并发布 Release
 #
-#  触发：main 分支每次 push
+#  触发：main 分支每次 push；也可在 Actions 页面手动触发
 #  逻辑：比较 server/config/config.json 的 version 字段与上一次提交
 #        —— 相同则跳过；不同则跑 scripts/pack.sh 打包 5 个平台的包，
 #           上传到 GitHub Release。
@@ -13,6 +13,9 @@
 #      否则该项目永远不会产出第一个 Release。
 #   3. 打包需要联网下载 5 份 JRE（约 250MB），故只在版本真的变了时才跑。
 #   4. fetch-depth: 0 —— 需要完整的 git 历史来取上一个提交的内容。
+#   5. 保留 workflow_dispatch：改了打包逻辑但版本号没变时（例如修好了
+#      包名或包内结构），靠 push 只会走到「跳过」分支，必须能手动重发。
+#      force=true 让手动触发绕过版本比较。
 # ================================================================
 
 name: Release on version change
@@ -20,6 +23,12 @@ name: Release on version change
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '忽略版本比较，强制重新打包并发布'
+        type: boolean
+        default: false
 
 # 打包需要写 dist/、上传 Release 资产，都要求 contents 写权限。
 permissions:
@@ -66,7 +75,17 @@ jobs:
           fi
           echo "上一版本: ${PREV:-<无>}"
 
-          if [ "$NEW" = "$PREV" ]; then
+          # 手动触发且勾了 force：跳过版本比较。
+          # 用于「打包逻辑改了但版本号没变」的场景 —— 这时 push 必然落到
+          # 「跳过」分支，只能靠 force 重发。
+          FORCE="${{ inputs.force || false }}"
+
+          if [ "$FORCE" = "true" ]; then
+            echo "手动强制发布（force=true），忽略版本比较。"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$NEW" >> "$GITHUB_OUTPUT"
+            echo "tag=v$NEW" >> "$GITHUB_OUTPUT"
+          elif [ "$NEW" = "$PREV" ]; then
             echo "版本未变化（$NEW），跳过打包与发布。"
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
@@ -79,11 +98,18 @@ jobs:
       - name: 检查 Release 是否已存在
         # 仅在版本变化时执行。同一版本重复触发（改代码不改版本号后又推）
         # 不该覆盖既有 Release —— 产物会与该版本首次发布时不一致。
+        # 但 force 时允许覆盖：那正是「重新生成这一版的包」的入口。
         if: steps.check.outputs.changed == 'true'
         id: exists
         run: |
           set -uo pipefail
           TAG="${{ steps.check.outputs.tag }}"
+          FORCE="${{ inputs.force || false }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "force=true：若Release $TAG 已存在，将删除后重建。"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::notice::Release $TAG 已存在，跳过本次发布。"
             echo "exists=true" >> "$GITHUB_OUTPUT"
@@ -126,10 +152,8 @@ jobs:
           # 先建 Release（不带资产），再逐个上传。
           #
           # 不用 `gh release create ... dist/*.zip` 一步到位：那样由 gh 自己
-          # 从路径推导 asset 名，含非 ASCII 字符的文件名会被它吞掉前缀
-          # （「红果web-1.0.1-….zip」上传后变成「web-1.0.1-….zip」，
-          # 实测 v1.0.1 的 5 个资产全丢了「红果」二字）。
-          # 自己算好名字显式传给 --clobber 可绕过这个问题。
+          # 从路径推导 asset 名。包名已改为纯 ASCII（hongguo-web-*.zip），
+          # 不再受服务端剥中文前缀的影响，但显式给名仍更可控。
           shopt -s nullglob
           zips=(dist/*.zip)
           if [ ${#zips[@]} -eq 0 ]; then
@@ -138,8 +162,15 @@ jobs:
           fi
 
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "红果web $VERSION" --notes-start-tag "$(git tag --sort=-v:refname | head -1 || true)" >/dev/null 2>&1 \
-              || gh release edit "$TAG" --title "红果web $VERSION" >/dev/null
+            # force 重发：先删掉旧 Release。否则 --clobber 只能同名覆盖，
+            # 改过包名时旧资产会留在那儿，用户会同时看到两套包。
+            if [ "${{ inputs.force || false }}" = "true" ]; then
+              echo "force=true：删除既有 Release $TAG 后重建。"
+              gh release delete "$TAG" --yes --cleanup-tag
+            fi
+            gh release create "$TAG" \
+              --title "红果web $VERSION" \
+              --generate-notes
           else
             gh release create "$TAG" \
               --title "红果web $VERSION" \
@@ -150,9 +181,7 @@ jobs:
           printf '  %s\n' "${zips[@]}"
 
           for z in "${zips[@]}"; do
-            # 文件名即 asset 名，显式给出；printf 处理含中文的 basename
-            name="$(basename "$z")"
-            echo "  -> $name"
+            echo "  -> $(basename "$z")"
             gh release upload "$TAG" "$z" --clobber
           done
 
