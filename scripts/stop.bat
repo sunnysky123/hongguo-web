@@ -3,84 +3,71 @@
 @title hongguo-web - stop
 
 @rem ================================================================
-@rem Pure ASCII on purpose: see the long note at the top of start.bat.
+@rem  Stop the running services. That is ALL this script does.
 @rem
-@rem Note the second trap documented there: "call :sub <arg>" inside an
-@rem if (...) block loses the argument, so every message below is
-@rem reached by "goto :say_xxx" instead.
+@rem  Design rule: see the long note at the top of start.bat. In
+@rem  short -- the batch layer stays trivial and 100% ASCII, because
+@rem  every non-trivial branch in cmd is a branch that can trip over
+@rem  the byte-offset bookkeeping and start printing lines twice.
+@rem
+@rem  So this file does not parse JSON, does not scan processes, and
+@rem  does not check ports. It hands "--stop" to the jar and lets the
+@rem  Java side do the work: the ports it reports on come from
+@rem  server\config\config.json, and reading that here would mean
+@rem  keeping a second copy of the config parser in cmd.
 @rem ================================================================
 
 @cd /d "%~dp0.."
-@set "CD=%CD%"
 
-@call :say init
-@goto :main
+set "JAR=java\dist\hongguo-api.jar"
 
-:say
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
-@exit /b %ERRORLEVEL%
+@rem --- locate a JRE -------------------------------------------------
+@rem Needed only to run the jar. Same order as Java's Launcher.findJava:
+@rem the bundled jre\ wins over JAVA_HOME, which wins over PATH.
+set "JAVA_BIN="
+if exist "jre\bin\java.exe" set "JAVA_BIN=%CD%\jre\bin\java.exe"
+if not defined JAVA_BIN for /d %%d in ("jre\*") do @if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
+if not defined JAVA_BIN if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
+if not defined JAVA_BIN for %%p in (java.exe) do set "JAVA_BIN=%%~$PATH:p"
+if not defined JAVA_BIN goto :need_jre
 
-:ports_busy
-@call :say stop.port_busy
-@set "HG_NETSTAT=%TEMP%\hongguo_netstat_%RANDOM%.txt"
-@netstat -ano | findstr LISTENING | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% " > "%HG_NETSTAT%"
-@call :say stop.netstat
-@del /q "%HG_NETSTAT%" >nul 2>&1
-@set "HG_NETSTAT="
-@goto :ports_done
+if not exist "%JAR%" goto :no_jar
+goto :run
 
-:ports_free
-@call :say stop.port_free
+:run
+@rem --stop always exits 0: "stopped it" and "nothing was running"
+@rem are both normal outcomes of an idempotent stop.
+"%JAVA_BIN%" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "%JAR%" --stop
+set "RC=%ERRORLEVEL%"
+if not "%RC%"=="0" goto :failed
+echo.
+echo   Stop request finished.
+pause
+exit /b 0
 
-:ports_done
-@call :say blank
-@pause
-@exit /b 0
+:failed
+echo.
+echo   Stop failed with code %RC%.
+echo   Scroll up for the reason.
+echo.
+pause
+exit /b %RC%
 
-:cfg_read
-@rem Port detection follows server\config\config.json, so editing the
-@rem config does not leave us probing a stale port.
-@rem Two traps avoided here:
-@rem  1) never put a multi-line for /f with backticks and a PowerShell
-@rem     pipe inside an if (...) block -- cmd takes the pipe byte as the
-@rem     end of the block and truncates it, leaving the ports empty.
-@rem  2) never use "for /f ... do call :sub": a nested call whose
-@rem     "goto :eof" returns only one level corrupts the call stack.
-@if not defined PORT set "PORT=8000"
-@if not defined SIGN_PORT set "SIGN_PORT=9099"
-@set "HG_CFG_DUMP=%TEMP%\hongguo_stop_%RANDOM%.txt"
-@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'PORT=' + $j.api.port; 'SIGN_PORT=' + $j.signer.port" > "%HG_CFG_DUMP%" 2>nul
-@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @set "%%A=%%B"
-@del /q "%HG_CFG_DUMP%" >nul 2>&1
-@set "HG_CFG_DUMP="
-@if not defined PORT set "PORT=8000"
-@if not defined SIGN_PORT set "SIGN_PORT=9099"
-@exit /b 0
+:need_jre
+echo.
+echo   No Java runtime found, so there is no way to run the stop command.
+echo   If services are running you can end them by hand: open Task Manager,
+echo   select any "java.exe" started from this folder, and end the task.
+echo.
+pause
+exit /b 1
 
-:main
-@call :say stop.header
-
-@rem -- Kill signer / API processes. PowerShell reports one line per
-@rem    PID into a temp file and msg.ps1 renders it, so no CJK travels
-@rem    on a command line.
-@set "HG_STOPPED=%TEMP%\hongguo_stopped_%RANDOM%.txt"
-@powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8;" ^
-  "$out=@();" ^
-  "$t = Get-CimInstance Win32_Process | Where-Object { " ^
-  "   ($_.Name -eq 'java.exe'  -and ($_.CommandLine -like '*unidbg-sign.jar*' -or $_.CommandLine -like '*hongguo-api.jar*')) -or " ^
-  "   ($_.Name -eq 'node.exe'  -and ($_.CommandLine -like '*launcher.js*' -or $_.CommandLine -like '*server\src\server.js*')) " ^
-  "};" ^
-  "if ($t) { $out = @($t | ForEach-Object { $_.Name.Replace('.exe','') + ' ' + $_.ProcessId }) };" ^
-  "if ($t) { $t | ForEach-Object { Stop-Process -Id $_.ProcessId -Force } };" ^
-  "[IO.File]::WriteAllLines($env:HG_STOPPED, $out, (New-Object Text.UTF8Encoding $false))"
-@call :say stop.killed
-@del /q "%HG_STOPPED%" >nul 2>&1
-@set "HG_STOPPED="
-
-@call :say stop.done
-
-@call :cfg_read
-@netstat -ano | findstr /r /c:":%PORT% " /c:":%SIGN_PORT% " | findstr "LISTENING" >nul 2>&1
-@if errorlevel 1 goto :ports_free
-@goto :ports_busy
+:no_jar
+echo.
+echo   Missing %CD%\%JAR%
+echo.
+echo   Nothing to stop through this script. If the service is running from
+echo   another copy of the project, stop it there instead.
+echo.
+pause
+exit /b 1
