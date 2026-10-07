@@ -1,43 +1,58 @@
 # 红果短剧 · 网页版
 ---
 
-## 一、先下载仓库
+## 一、下载发行包
 
-启动前先把整个仓库下载到本地（或把仓库克隆到本地），后续步骤都基于这份本地代码。
+启动前先去 **[Releases 页](https://github.com/sunnysky123/hongguo-web/releases)**
+下载与自己系统匹配的那个压缩包，解压就能跑。
+**不需要克隆仓库，也不需要预装 Java** —— 每个包都自带对应平台的 Java 运行时。
+
+### 挑哪个包
+
+| 你的系统 | 下载的文件（`1.0.1` 为例） |
+|---|---|
+| Windows x86-64（绝大多数 PC） | `红果web-1.0.1-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `红果web-1.0.1-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `红果web-1.0.1-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `红果web-1.0.1-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `红果web-1.0.1-macOS-arm.zip` |
+
+> 文件名里的版本号就是 `server/config/config.json` 的 `version` 字段，
+> 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
+>
+> `Windows-arm` 包内置的是同版本的 **x64** JRE：Temurin 没有发布 Windows on ARM
+> 的 JRE 25 构建，而 Windows on ARM64 原生兼容 x64 程序，直接用即可。
+> 其他四个包都是目标平台的原生运行时。
+
+### 解压并确认结构
+
+用系统自带的解压工具（Windows 下右键「全部解压缩」，
+Linux / macOS 下 `unzip 红果web-1.0.1-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
-# 克隆仓库
-git clone https://github.com/sunnysky123/hongguo-web.git
-
-# 或直接下载 ZIP 压缩包
-# https://github.com/sunnysky123/hongguo-web/archive/refs/heads/main.zip
-```
-
-下载完成后进入目录，确认结构完整。
-
-下载的是 ZIP 压缩包的话，需要先解压（注意解压后的目录名带 `-main` 后缀）：
-
-```bash
-unzip main.zip
-cd hongguo-web-main
-```
-
-用 `git clone` 克隆的则无需解压，直接进入目录：
-
-```bash
-cd hongguo-web
-```
-
-确认结构完整：
-
-```bash
+# Linux / macOS 示例：包内结构直接铺在当前目录
 ls
 ```
 
-应能看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、`capture/` 等目录。
-仓库本身不含 Java 运行时（那会让clone 体积从 37MB 涨到 200MB 以上）。
-发行包由 `scripts/pack.sh` 打包，内含对应平台的 Temurin JRE 25，解压即用。
-从源码运行时需要本机已有 Java 17+，或自行把 JRE 解压到 `jre/`（启动脚本会自动发现）。
+应看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、`capture/`、
+`jre/` 以及「平台说明.txt」。
+
+* Windows 资源管理器会多套一层 `红果web-1.0.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
+
+包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
+
+### 只想跑源码的话（可选）
+
+一般用户用不到。要改代码或自定义构建，才需要克隆仓库：
+
+```bash
+git clone https://github.com/sunnysky123/hongguo-web.git
+cd hongguo-web
+```
+
+仓库本身不含 Java 运行时（否则体积会从 37MB 涨到 200MB 以上），
+从源码运行需要本机已有 Java 17+，或自行把 JRE 解压到 `jre/`（启动脚本会自动发现）。
 
 ---
 

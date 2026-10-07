@@ -19,6 +19,11 @@
 
 @cd /d "%~dp0.."
 
+@rem ROOT is the project root as an absolute path. It is used to reach
+@rem server\config\config.json with a path that does not depend on the
+@rem current drive, and it also feeds the error message below.
+set "ROOT=%CD%"
+
 set "SRC=java\src"
 set "CLASSES=java\build\classes"
 set "DIST=java\dist"
@@ -62,10 +67,15 @@ if exist "java\resources" xcopy /e /i /q /y "java\resources" "%CLASSES%\" >nul
 
 @rem Version comes from server\config\config.json so the jar manifest stays
 @rem in sync with what --version prints. The nested for /f strips the key and
-@rem the surrounding quotes; if anything is missing VERSION stays 1.0.0, so a
-@rem broken config never fails the build.
-@set "VERSION=1.0.0"
-@for /f "tokens=2 delims=:,}" %%v in ('findstr /r /c:"\"version\"" "%ROOT%server\config\config.json" 2^>nul') do @set "VERSION=%%~v"
+@rem the surrounding quotes.
+@rem
+@rem There is deliberately no hard-coded fallback number: that would copy the
+@rem version into this script, so bumping it would mean editing two places
+@rem again. A missing version is a broken config, so fail loudly instead of
+@rem stamping a stale number into the jar.
+@set "VERSION="
+@for /f "tokens=2 delims=:,}" %%v in ('findstr /r /c:"\"version\"" "%ROOT%\server\config\config.json" 2^>nul') do @set "VERSION=%%~v"
+if not defined VERSION goto :no_version
 echo         version %VERSION%
 
 (
@@ -141,6 +151,16 @@ exit /b 1
 :compile_failed
 echo.
 echo   Compilation failed. Errors are listed above.
+echo.
+pause
+exit /b 1
+
+:no_version
+echo.
+echo   Could not read the version field from
+echo     %ROOT%\server\config\config.json
+echo   Add a line like  "version": "x.y.z"  at the top level of that file
+echo   and run this script again.
 echo.
 pause
 exit /b 1

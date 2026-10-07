@@ -56,10 +56,15 @@ echo "        源文件 $COUNT 个"
 echo "  [2/2] 打包 JAR ..."
 
 # 版本号取自 server/config/config.json，与 --version 显示的保持一致。
-# 读不到时回落到 1.0.0，不让构建因为配置缺失而失败。
+# config.json 是版本号的唯一数据源，源码里没有副本。读不到就直接失败：
+# 写一个写死的兜底号等于把版本号复制到脚本里，升级时又得改两处。
 VERSION=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
     "$ROOT/server/config/config.json" 2>/dev/null | head -1)
-VERSION="${VERSION:-1.0.0}"
+if [ -z "$VERSION" ]; then
+    echo "  [错误] server/config/config.json 里读不到 version 字段，无法确定版本号。" >&2
+    echo "         请在该文件顶层补一行 \"version\": \"x.y.z\"，再重新构建。" >&2
+    exit 1
+fi
 echo "        版本 $VERSION"
 # 把资源目录（若有）一并拷入
 for d in "$SRC"/../resources; do

@@ -80,12 +80,16 @@ public final class Config {
     private static final Map<String, Object> CFG = load();
 
     /**
-     * 找不到配置文件时的版本号兜底。
+     * 配置文件与 jar manifest 都拿不到版本号时的占位值。
      *
-     * <p>需与 {@code scripts/build-java.sh} / {@code .bat} 写进 MANIFEST 的
-     * {@code Implementation-Version} 保持一致。
+     * <p>刻意<b>不</b>保留一个写死的版本号：那等于把版本号又复制回代码里，
+     * 升级时仍需改两处，正是当初要消除的问题。这里宁可显示 unknown，
+     * 也不报一个可能过期的数字。
      */
-    private static final String VERSION_FALLBACK = "1.0.0";
+    private static final String VERSION_UNKNOWN = "unknown";
+
+    /** jar manifest 里的版本键，由 scripts/build-java.* 从 config.json 同步写入。 */
+    private static final String MANIFEST_VERSION_KEY = "Implementation-Version";
 
     private static Map<String, Object> load() {
         // 允许用环境变量直接指定配置文件路径（与 HONGGUO_CONTENT_CONFIG 同一套用法）
@@ -216,25 +220,60 @@ public final class Config {
     /**
      * 当前项目版本号，取自配置文件顶层的 {@code version}。
      *
-     * <p>版本号此前硬编码在 {@code Main} 里，与构建脚本写进 MANIFEST 的
+     * <p>版本号此前硬编码在 {@code Main} 里，与构建脚本写进 manifest 的
      * {@code Implementation-Version} 各存一份，升级时容易漏改。
      * 现在以配置文件为单一数据源，{@code --version} 与构建产物都跟着它走。
+     *
+     * <p>取值三级，<b>全部不含写死的版本号</b>：
+     * <ol>
+     *   <li>配置文件顶层的 {@code version}（日常路径）</li>
+     *   <li>jar manifest 的 {@code Implementation-Version}
+     *       ——{@code scripts/build-java.*} 构建时从同一个 config.json 同步写入，
+     *       所以它并不引入第二个数据源，只是配置的「构建期快照」；
+     *       在仓库根目录外执行 {@code --version} 时靠这一级仍有输出</li>
+     *   <li>{@value #VERSION_UNKNOWN} 占位：连 jar 都不是（例如直接跑 classes 目录）时</li>
+     * </ol>
      *
      * <p>刻意<b>不</b>经 {@link #str}：{@code version} 未登记在 {@link #ENV_OF}，
      * 本就读不到环境变量；这里直接走 {@link #get}，是为了明确「版本号不是
      * 运行期可调项」——否则将来有人给 {@code ENV_OF} 补上映射，版本号就会
      * 悄悄变成可被环境变量覆盖，「改了配置却没生效」将难以排查。
      *
-     * <p>配置按相对路径查找，在仓库根目录外执行会读不到；此时回落
-     * {@link #VERSION_FALLBACK}，保证 {@code --version} 在任何位置都有输出。
-     *
-     * @return 版本号；未配置或为空时返回 {@code "1.0.0"}
+     * @return 版本号；配置与 manifest 都读不到时返回 {@value #VERSION_UNKNOWN}
      */
     public static String version() {
         Object o = get("version");
-        if (o == null) return VERSION_FALLBACK;
-        String s = Json.optStr(o, "").trim();
-        return s.isEmpty() ? VERSION_FALLBACK : s;
+        if (o != null) {
+            String s = Json.optStr(o, "").trim();
+            if (!s.isEmpty()) return s;
+        }
+        String fromManifest = versionFromManifest();
+        return fromManifest != null ? fromManifest : VERSION_UNKNOWN;
+    }
+
+    /**
+     * 从 jar manifest 读 {@code Implementation-Version}。
+     *
+     * <p><b>不用 {@code Package.getImplementationVersion()}</b>：它在 JDK 25 上
+     * 对本项目的 jar 实测返回 null（该方法走的是 class 所属 {@link Package} 的
+     * 属性，jar 内 manifest 的主属性并不会被填进去），读不到等于没有兜底。
+     * 直接读 {@code META-INF/MANIFEST.MF} 资源则稳定可用。
+     *
+     * @return manifest 中的版本号；不在 jar 内、读取失败或该属性缺失时返回 null
+     */
+    private static String versionFromManifest() {
+        try (java.io.InputStream in =
+                     Config.class.getResourceAsStream("/META-INF/MANIFEST.MF")) {
+            if (in == null) return null;
+            String v = new java.util.jar.Manifest(in)
+                    .getMainAttributes().getValue(MANIFEST_VERSION_KEY);
+            if (v == null) return null;
+            v = v.trim();
+            return v.isEmpty() ? null : v;
+        } catch (Exception e) {
+            // manifest 缺失或损坏都不影响启动，版本号退回 unknown 即可
+            return null;
+        }
     }
 
     /** 列出全部可配置键，供 {@code --help} 与文档同步。 */
