@@ -12,16 +12,19 @@
 @rem      cmd seek with a stale offset
 @rem Either one makes cmd re-read bytes it already consumed, so a line
 @rem prints twice and the command echo leaks back as
-@rem "C:\...>echo." garbage. It is a cmd.exe internal, so it cannot be
-@rem fixed by adding a BOM, rewriting comments or padding offsets.
+@rem "C:\...>echo." garbage. It is a cmd.exe internal, not a script bug.
 @rem
-@rem The fix is structural: cmd never handles CJK here. All Chinese
-@rem text lives in msg.ps1 (UTF-8 with BOM) and is printed by
-@rem PowerShell, which sets the console code page itself and writes the
-@rem bytes in one place. Everything below the "say" helper is ASCII.
+@rem So cmd never handles CJK here. All Chinese text lives in msg.ps1
+@rem (UTF-8 with BOM) and is printed by PowerShell, which sets the
+@rem console code page itself. Everything below is ASCII.
 @rem
-@rem msg.ps1 replaces {{placeholders}} from environment variables, so
-@rem no non-ASCII text is ever passed on a command line.
+@rem SECOND cmd TRAP, learned the hard way: "call :sub <arg>" inside an
+@rem if (...) block loses the argument. cmd parses the whole block into
+@rem a single compound command first, and the subroutine argument never
+@rem arrives -- msg.ps1 then gets -Key "" and aborts. So NO "call :say"
+@rem ever appears inside parentheses. Each message has its own ":say_*"
+@rem label reached by "goto", and control returns to a continuation
+@rem label afterwards.
 @rem ================================================================
 
 @cd /d "%~dp0.."
@@ -32,41 +35,39 @@
 @set "HG_LOG_ABS=%CD%\%LOG_FILE%"
 @set "CD=%CD%"
 
-@rem -- Say: print one or more msg.ps1 blocks, then return.
-@rem    Keys are comma separated:  call :say init,start.banner
-@rem    Exit code 2 means the key is unknown, which is a script bug.
+@call :say init
+@goto :main
+
+@rem ---------------------------------------------------------------
+@rem Message printer. Always invoked as a plain "call :say <key>" at
+@rem top level (never inside parentheses). The :say_xxx labels below
+@rem wrap the ones that used to sit inside if (...) blocks.
+@rem ---------------------------------------------------------------
 :say
 @powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key "%~1"
 @exit /b %ERRORLEVEL%
 
-@call :say init
-
-@call :read_config
-@call :prepare 1>>"%LOG_FILE%" 2>&1
-@if errorlevel 1 (
-  @call :say start.abort
-  @pause
-  @exit /b 1
-)
-
-@call :say start.banner
-
-@set "JAR_ARGS="
-@if /i "%MODE%"=="nosign"   set "JAR_ARGS=--no-sign"
-@if /i "%MODE%"=="signonly" set "JAR_ARGS=--sign-only"
-
-@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar %JAR_ARGS% --port %SIGN_PORT%
-@set "RC=%ERRORLEVEL%"
-@set "HG_STAMP=%DATE% %TIME%"
-@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key start.log_tail >>"%LOG_FILE%"
-@if not "%RC%"=="0" (
-  @call :say start.exit_err
-  @pause
-  @exit /b %RC%
-)
-@call :say start.stopped
+:start_abort
+@call :say start.abort
 @pause
-@exit /b 0
+@exit /b 1
+
+:start_exit_err
+@call :say start.exit_err
+@pause
+@exit /b %RC%
+
+:prep_no_java
+@call :say prepare.no_java
+@exit /b 1
+
+:prep_no_jar
+@call :say prepare.no_jar
+@exit /b 1
+
+:prep_build_fail
+@call :say prepare.build_fail
+@exit /b 1
 
 @rem ================================================================
 @rem Read settings from server\config\config.json.
@@ -125,22 +126,42 @@
 @if /i "%HG_CFG_SKIP_JRE%"=="True" set "HG_SKIP_JRE_INSTALL=1"
 @exit /b 0
 
+@rem ---------------------------------------------------------------
+@rem Main flow
+@rem ---------------------------------------------------------------
+:main
+@call :read_config
+@call :prepare 1>>"%LOG_FILE%" 2>&1
+@if errorlevel 1 goto :start_abort
+@call :say start.banner
+
+@set "JAR_ARGS="
+@if /i "%MODE%"=="nosign"   set "JAR_ARGS=--no-sign"
+@if /i "%MODE%"=="signonly" set "JAR_ARGS=--sign-only"
+
+@java -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar java\dist\hongguo-api.jar %JAR_ARGS% --port %SIGN_PORT%
+@set "RC=%ERRORLEVEL%"
+@set "HG_STAMP=%DATE% %TIME%"
+@powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0msg.ps1" -Key start.log_tail >>"%LOG_FILE%"
+@if not "%RC%"=="0" goto :start_exit_err
+@call :say start.stopped
+@pause
+@exit /b 0
+
+@rem ---------------------------------------------------------------
+@rem :prepare -- console output goes to the launcher log via the
+@rem caller's redirection, so plain echo is fine here (ASCII only).
+@rem ---------------------------------------------------------------
 :prepare
 @set "HG_STAMP=%DATE% %TIME%"
 @call :say start.log_head
 @call :say blank
 
 @call :ensure_java
-@if errorlevel 1 (
-  @call :say prepare.no_java
-  @exit /b 1
-)
+@if errorlevel 1 goto :prep_no_java
 @echo   [1/4] Java %JAVAVER% (%JAVA_SRC%)
 
-@if not exist "signer\unidbg-sign.jar" (
-  @call :say prepare.no_jar
-  @exit /b 1
-)
+@if not exist "signer\unidbg-sign.jar" goto :prep_no_jar
 @if not exist "capture\fq_oversea\libmetasec_ml.so"    goto :missing_so
 @if not exist "capture\fq_oversea\libc++_shared.so"    goto :missing_so
 @if not exist "capture\fq_oversea\ms_16777218.bin"      goto :missing_so
@@ -152,16 +173,17 @@
 @exit /b 1
 
 :after_so
-@if exist "java\dist\hongguo-api.jar" (
-  @echo   [3/4] API service JAR ready
-) else (
-  @echo   [3/4] API service JAR missing, building...
-  @call "%~dp0build-java.bat"
-  @if errorlevel 1 (
-    @call :say prepare.build_fail
-    @exit /b 1
-  )
-)
+@if exist "java\dist\hongguo-api.jar" goto :jar_ready
+@echo   [3/4] API service JAR missing, building...
+@call "%~dp0build-java.bat"
+@if errorlevel 1 goto :prep_build_fail
+@echo   [3/4] build finished
+@goto :jar_ready_done
+
+:jar_ready
+@echo   [3/4] API service JAR ready
+
+:jar_ready_done
 
 @rem Port and listen IP are already read from the config file in
 @rem :read_config, so do NOT hardcode them again here. An env var that
@@ -208,80 +230,97 @@
 @rem 400 tries * (500ms + up to 2s timeout) covers a ~90s init window.
 @start "" /b powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$u='%OPEN_URL%';$h=$u+'health';for($i=0;$i -lt 400;$i++){try{$r=Invoke-WebRequest -UseBasicParsing -Uri $h -TimeoutSec 2;if($r.StatusCode -eq 200){Start-Process $u;break}}catch{};Start-Sleep -Milliseconds 500}"
-:no_browser
 
+:no_browser
 @echo   [4/4] handoff to hongguo-api.jar
 @echo   API port %PORT%   signer port %SIGN_PORT%   mode %MODE%
 @exit /b 0
 
+@rem ---------------------------------------------------------------
+@rem :ensure_java -- locate a JRE 17+, installing one if allowed.
+@rem
+@rem Self-contained on purpose. A "goto" to a label OUTSIDE this
+@rem subroutine would unwind the call stack at once, so returning to
+@rem :prepare would be skipped entirely and control would fall into
+@rem the main flow. Every label below therefore carries the ej_ prefix
+@rem and the only exits are "exit /b 0/1".
+@rem ---------------------------------------------------------------
 :ensure_java
 @set "BUNDLED_BIN="
 @if exist "jre\bin\java.exe" set "BUNDLED_BIN=%CD%\jre\bin"
 @if not defined BUNDLED_BIN for /d %%d in ("jre\*") do (
 @ if not defined BUNDLED_BIN if exist "%%~fd\bin\java.exe" set "BUNDLED_BIN=%%~fd\bin"
 )
-@if defined BUNDLED_BIN (
-  @set "PATH=%BUNDLED_BIN%;%PATH%"
-  @call :say prepare.jre_src_bundled
-  @set "JAVA_FROM_BUNDLED=1"
-  @goto :found_java
-)
+@if defined BUNDLED_BIN goto :ej_bundled
 
-@if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" (
-  @set "PATH=%JAVA_HOME%\bin;%PATH%"
-  @set "JAVA_SRC=JAVA_HOME"
-  @goto :found_java
-)
+@if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" goto :ej_java_home
+@goto :ej_probe_path
 
+:ej_bundled
+@set "PATH=%BUNDLED_BIN%;%PATH%"
+@call :say prepare.jre_src_bundled
+@set "JAVA_FROM_BUNDLED=1"
+@goto :ej_check_version
+
+:ej_java_home
+@set "PATH=%JAVA_HOME%\bin;%PATH%"
+@set "JAVA_SRC=JAVA_HOME"
+@goto :ej_check_version
+
+:ej_probe_path
 @where java >nul 2>&1
-@if not errorlevel 1 (
-  @set "JAVA_SRC=system PATH"
-  @goto :found_java
-)
+@if errorlevel 1 goto :ej_no_java_on_path
+@set "JAVA_SRC=system PATH"
+@goto :ej_check_version
 
-@if /i "%HG_SKIP_JRE_INSTALL%"=="1" goto :skip_jre_install
-@goto :do_jre_install
+:ej_no_java_on_path
+@if /i "%HG_SKIP_JRE_INSTALL%"=="1" goto :ej_skip_install
+@goto :ej_do_install
 
-:skip_jre_install
+:ej_skip_install
 @call :say prepare.jre_skip
 @exit /b 1
 
-:do_jre_install
+:ej_do_install
 @call :say prepare.jre_installing
 @set "HG_ASSUME_YES=1"
 @call "%~dp0install-jre.bat"
 @set "HG_ASSUME_YES="
-@if errorlevel 1 (
-  @call :say prepare.jre_fail
-  @exit /b 1
-)
+@if errorlevel 1 goto :ej_install_failed
 
 @set "JAVA_DIR="
 @if exist "%ProgramFiles%\Eclipse Adoptium\jdk-25\bin\java.exe" set "JAVA_DIR=%ProgramFiles%\Eclipse Adoptium\jdk-25"
 @if not defined JAVA_DIR if exist "%ProgramFiles%\Java\jdk-25\bin\java.exe" set "JAVA_DIR=%ProgramFiles%\Java\jdk-25"
 @if not defined JAVA_DIR if exist "%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25\bin\java.exe" set "JAVA_DIR=%LOCALAPPDATA%\Programs\Eclipse Adoptium\jdk-25"
-@if defined JAVA_DIR (
-  @set "PATH=%JAVA_DIR%\bin;%PATH%"
-  @set "JAVA_SRC=install dir"
-  @call :say prepare.jre_refresh
-)
+@if not defined JAVA_DIR goto :ej_verify_java
+@set "PATH=%JAVA_DIR%\bin;%PATH%"
+@set "JAVA_SRC=install dir"
+@call :say prepare.jre_refresh
 
+:ej_verify_java
 @where java >nul 2>&1
-@if errorlevel 1 (
-  @call :say prepare.jre_still_missing
-  @exit /b 1
-)
+@if errorlevel 1 goto :ej_still_missing
+@goto :ej_check_version
 
-:found_java
+:ej_install_failed
+@call :say prepare.jre_fail
+@exit /b 1
+
+:ej_still_missing
+@call :say prepare.jre_still_missing
+@exit /b 1
+
+:ej_check_version
 @set JAVAVER=unknown
 @for /f "tokens=3" %%v in ('java -version 2^>^&1 ^| findstr /r "version ""[0-9]"') do @set "JAVAVER=%%~v"
 @set "JAVAVER=%JAVAVER:v=%"
 
 @set JAVA_MAJOR=0
 @for /f "tokens=1 delims=." %%m in ("%JAVAVER%") do set "JAVA_MAJOR=%%m"
-@if %JAVA_MAJOR% LSS 17 (
-  @call :say prepare.jre_too_old
-  @call :say prepare.jre_too_old_fix
-  @exit /b 1
-)
+@if %JAVA_MAJOR% LSS 17 goto :ej_too_old
 @exit /b 0
+
+:ej_too_old
+@call :say prepare.jre_too_old
+@call :say prepare.jre_too_old_fix
+@exit /b 1
