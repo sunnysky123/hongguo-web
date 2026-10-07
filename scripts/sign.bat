@@ -39,7 +39,7 @@ goto :run
 :run
 @rem --sign-only loads signer.port, signer.jvm_xmx and the asset list
 @rem from config.json, then blocks. Ctrl-C stops it.
-"%JAVA_BIN%" -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -jar "%JAR%" --sign-only %*
+"%JAVA_BIN%" -jar "%JAR%" --sign-only %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto :exited
 echo.
