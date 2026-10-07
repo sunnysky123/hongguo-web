@@ -67,8 +67,14 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @rem -- Save user env var first: HG_OPEN_BROWSER=0 disables auto-open
 @set "HG_OPEN_BROWSER_ENV=%HG_OPEN_BROWSER%"
 @set "HG_CFG_DUMP=%TEMP%\hongguo_cfg_%RANDOM%.txt"
-@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'HG_HOST=' + $j.api.host; 'HG_PORT=' + $j.api.port; 'HG_SIGN_PORT=' + $j.signer.port; 'HG_SIGN_ENABLED=' + $j.signer.enabled; 'HG_OPEN_BROWSER=' + $j.launcher.open_browser; 'HG_SKIP_JRE=' + $j.launcher.skip_jre_install" > "%HG_CFG_DUMP%" 2>nul
-@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @call :cfg_apply "%%A" "%%B"
+@powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $j = Get-Content -Raw 'server\config\config.json' | ConvertFrom-Json; 'HOST=' + $j.api.host; 'PORT=' + $j.api.port; 'SIGN_PORT=' + $j.signer.port; 'SIGN_ENABLED=' + $j.signer.enabled; 'OPEN_BROWSER=' + $j.launcher.open_browser; 'SKIP_JRE=' + $j.launcher.skip_jre_install" > "%HG_CFG_DUMP%" 2>nul
+@rem Dump each key to its own HG_CFG_<KEY> var, one pass, no nested call.
+@rem A "for /f ... do call :sub" inside another call is unsafe here:
+@rem "goto :eof" returns only ONE level, so the call stack gets corrupted
+@rem and control falls through to the echo lines below, which then run
+@rem with echo still on. That printed the prompt + "echo." garbage.
+@rem Writing the var name dynamically keeps this a single flat loop.
+@if exist "%HG_CFG_DUMP%" for /f "usebackq tokens=1,* delims==" %%A in ("%HG_CFG_DUMP%") do @set "HG_CFG_%%A=%%B"
 @del /q "%HG_CFG_DUMP%" >nul 2>&1
 @set "HG_CFG_DUMP="
 
@@ -100,15 +106,6 @@ echo   服务已停止。启动器日志：%LOG_FILE%
 @set "HG_SKIP_JRE_INSTALL=0"
 @if /i "%HG_CFG_SKIP_JRE%"=="True" set "HG_SKIP_JRE_INSTALL=1"
 @exit /b 0
-
-:cfg_apply
-@if /i "%~1"=="HG_HOST"         set "HG_CFG_HOST=%~2"
-@if /i "%~1"=="HG_PORT"         set "HG_CFG_PORT=%~2"
-@if /i "%~1"=="HG_SIGN_PORT"    set "HG_CFG_SIGN_PORT=%~2"
-@if /i "%~1"=="HG_SIGN_ENABLED" set "HG_CFG_SIGN_ENABLED=%~2"
-@if /i "%~1"=="HG_OPEN_BROWSER" set "HG_CFG_OPEN_BROWSER=%~2"
-@if /i "%~1"=="HG_SKIP_JRE"     set "HG_CFG_SKIP_JRE=%~2"
-@goto :eof
 
 :prepare
 echo [%DATE% %TIME%] ===== start.bat begin =====
