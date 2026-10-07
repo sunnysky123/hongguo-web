@@ -16,6 +16,12 @@
 #   5. 保留 workflow_dispatch：改了打包逻辑但版本号没变时（例如修好了
 #      包名或包内结构），靠 push 只会走到「跳过」分支，必须能手动重发。
 #      force=true 让手动触发绕过版本比较。
+#   6. checkout 与 setup-java 均锁在 node24 版本（v7 / v6）。v4 系列跑的是
+#      node20，GitHub 已弃用并在强制迁移，会同时报出两条警告：一条是
+#      「Node.js 20 is deprecated」，另一条是 setup-java v4 本身已停止
+#      维护。升级前查过：v6 的 distribution 仍接受 temurin，
+#      java-version 格式未变；checkout v6 起凭据存到 RUNNER_TEMP 下的
+#      独立文件，本工作流不做 authenticated git push，不受影响。
 # ================================================================
 
 name: Release on version change
@@ -41,7 +47,11 @@ jobs:
 
     steps:
       - name: 检出代码
-        uses: actions/checkout@v4
+        # v7 起使用 node24 运行时（v4 是 node20，已被 GitHub 弃用并强制
+        # 迁移）。v6 起 persist-credentials 把凭据存到 RUNNER_TEMP 下的
+        # 独立文件而非 .git/config —— 本工作流只拉代码、不做 authenticated
+        # git push，不受影响。
+        uses: actions/checkout@v7
         with:
           # 取上一个提交的内容必须要有历史；默认的 depth=1 拿不到 HEAD^。
           fetch-depth: 0
@@ -119,7 +129,12 @@ jobs:
 
       - name: 准备构建环境
         if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
-        uses: actions/setup-java@v4
+        # v6 使用 node24 运行时；v4 已被 GitHub 标记 deprecated
+        # （「will no longer receive updates」），会停止修复。
+        # v6 的变化对这里均无影响：distribution 仍支持 temurin，
+        # java-version 输入格式不变。（v6 把 zulu 的元数据来源从
+        # Zulu Discovery API 迁到 Azul Metadata API，与 temurin 无关。）
+        uses: actions/setup-java@v6
         with:
           # 显式装 JDK 25：JAR 由 JDK 25 编译（class 版本 69），
           # 低版本 javac 编出来的包目标机跑不了。
