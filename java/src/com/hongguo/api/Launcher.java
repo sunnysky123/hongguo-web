@@ -95,6 +95,23 @@ public final class Launcher {
             }
         }
 
+        // --stop：按 jar 路径找到并停掉在跑的实例，然后退出。
+        // 放在 Java 侧是因为目标与端口都来自 config.json —— 脚本要拿到
+        // 它们就得先把JSON 解析一遍，等于把配置逻辑在 bat 里重写一份。
+        for (String a : args) {
+            if (a.equals("--stop")) {
+                boolean killed = stopRunning();
+                // 只在真的有实例被杀时才查端口：没找到进程的情况下
+                // 端口必然是空的，查了也只是噪声。
+                if (killed) reportPorts(Config.num("api.port", 8000), signPort);
+                // 两种结果都算成功：「停掉了」和「本来就没在跑」都是
+                // 幂等停止的正常结局。返回非 0 会让stop.bat 打出
+                // "Service exited with code 1"，把一次正常操作报成失败。
+                System.exit(0);
+                return;
+            }
+        }
+
         // 尽早注册关闭钩子：必须在启动签名服务之前，
         // 否则启动过程中被 Ctrl-C 就会漏掉子进程清理。
         List<Process> children = new ArrayList<>();
@@ -209,10 +226,89 @@ public final class Launcher {
         // 这里只补一行停止提示，避免同一批信息在控制台出现两遍。
         Log.info("按 Ctrl-C 停止");
 
+        // 浏览器交给 Java 侧开：launcher.open_browser 是配置项，
+        // 启动脚本只负责把 JVM 拉起来，不参与任何编排。
+        if (Config.bool("launcher.open_browser", true)) {
+            openBrowserWhenReady(apiPort);
+        }
+
         // 同上：阻塞等待 Ctrl-C，由关闭钩子负责清理签名子进程。
         // 没有这一步，main 返回后 JVM 不会退出，钩子也就不会跑。
         awaitShutdown(shuttingDown);
         shutdown(children);
+    }
+
+    /**
+     * 服务就绪后打开浏览器。
+     *
+     * 之所以放在 Java 而不是 bat：host/port 都由 config.json 决定，
+     * 脚本要拿到它们就得先把配置读一遍并回传，等于把配置解析
+     * 逻辑在 bat 里重写一份。这里直接用刚启动的端口即可。
+     *
+     * 监听 0.0.0.0 时必须改用 127.0.0.1：0.0.0.0 是"监听所有网卡"的
+     * 通配地址，浏览器拿它当目标去连会直接失败（与 bat 里原先
+     * HG_BROWSER_HOST 的处理一致）。
+     *
+     * 单独起线程轮询 /health：Server.start() 返回时端口已经在听，
+     * 但前端页面还要等签名服务与密钥就绪才能真正可用，过早打开
+     * 会看到空白页。超时 90s 后放弃，不阻塞主流程。
+     */
+    private static void openBrowserWhenReady(int apiPort) {
+        final String host = browserHost();
+        final String url = "http://" + host + ":" + apiPort + "/ui";
+        final String health = "http://127.0.0.1:" + apiPort + "/health";
+        Log.info("就绪后自动打开 " + url);
+        Thread t = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + 90_000L;
+            while (System.currentTimeMillis() < deadline) {
+                if (probe(health, 2000)) {
+                    browse(url);
+                    return;
+                }
+                try {
+                    TimeUnit.MILLISECONDS.sleep(500);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            Log.warn("等待服务就绪超时，未自动打开浏览器，请手动访问 " + url);
+        }, "hg-open-browser");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** 浏览器可连接的地址：0.0.0.0 / :: 是监听通配符，不能作为连接目标。 */
+    private static String browserHost() {
+        String h = Config.str("api.host", "127.0.0.1");
+        if (h.isEmpty() || h.equals("0.0.0.0") || h.equals("::")) return "127.0.0.1";
+        return h;
+    }
+
+    /**
+     * 调起系统默认浏览器。
+     *
+     * 优先用 Desktop.browse()，它在 Windows 上走 ShellExecute，
+     * 不依赖 rundll32.exe 这个非公开入口。失败时静默：打不开浏览器
+     * 不影响服务本身，用户手动访问即可。
+     */
+    private static void browse(String url) {
+        try {
+            if (java.awt.Desktop.isDesktopSupported()
+                    && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
+                java.awt.Desktop.getDesktop().browse(java.net.URI.create(url));
+                return;
+            }
+        } catch (Throwable ignored) {
+            // 落到下面的命令行方案
+        }
+        try {
+            new ProcessBuilder(isWindows() ? "rundll32" : "xdg-open", "url.dll,FileProtocolHandler", url)
+                    .start();
+        } catch (IOException ignored) {
+            // 无图形环境（如 WSL/容器）：提示手动访问即可
+            Log.warn("无法自动打开浏览器，请手动访问 " + url);
+        }
     }
 
     /**
@@ -300,6 +396,179 @@ public final class Launcher {
                 signOnly ? "仅签名服务" : (noSign ? "仅 API（免签）" : "完整"));
         System.out.println("  " + "-".repeat(56));
         System.out.println();
+    }
+
+    // ==================== 停止在跑的实例 ====================
+
+    /**
+     * 停掉本机在跑的服务进程（{@code --stop}）。
+     *
+     * <p>按 jar 路径匹配，而不是按端口：端口会随 config.json 变，
+     * 而 jar 路径是稳定的。
+     *
+     * <p><b>两个条件缺一不可</b>：进程本体必须是 JVM 或 Node，
+     * <i>并且</i>命令行里出现目标文件名。只看后者的教训很实际：
+     * 任何提到这个文件名的进程都会被误杀——shell 里那句
+     * {@code java -jar .../hongguo-api.jar --stop}、编辑器标签页、
+     * 甚至一次 grep，都会命中，而它们与本服务毫无关系。
+     * 加上进程类型这一层之后，能通过的只剩下真正在跑的实例。
+     *
+     * <p>兼容迁移前的 Node 进程：机器上可能还留着老版本留下的
+     * {@code launcher.js} / {@code server.js}。
+     *
+     * @return 至少停掉一个进程时返回 true
+     */
+    private static boolean stopRunning() {
+        String[] names = {"hongguo-api.jar", "unidbg-sign.jar",
+                "launcher.js", "server.js"};
+        long self = ProcessHandle.current().pid();
+        List<ProcessHandle> targets = new ArrayList<>();
+        ProcessHandle.allProcesses()
+                .forEach(h -> {
+                    if (h.pid() == self) return;          // 本进程（--stop 自己）
+                    if (!isRuntimeProcess(h)) return;      // 必须是 JVM / Node
+                    String cmd = commandLineOf(h);
+                    if (cmd == null) return;
+                    // 排除"正在执行停止"的进程（可能是本进程，也可能是
+                    // 用户同时在另一个窗口敲了 stop）。一次停止不该打断
+                    // 另一次停止：两个 --stop 并发时若互杀，双方都会被
+                    // SIGTERM 打断，调用方拿到 128+15 的退出码，
+                    // 看起来像失败，其实只是撞车。
+                    if (cmd.contains("--stop")) return;
+                    for (String n : names) {
+                        if (cmd.contains(n)) { targets.add(h); return; }
+                    }
+                });
+
+        if (targets.isEmpty()) {
+            Log.info("没有找到正在运行的签名/API 进程。");
+            return false;
+        }
+        for (ProcessHandle h : targets) {
+            String cmd = commandLineOf(h);
+            String tag = cmd != null && cmd.contains("unidbg-sign.jar") ? "signer" : "api";
+            System.out.println("   停止 [" + tag + "] PID " + h.pid());
+            kill(h);
+        }
+        // 给操作系统一点时间回收 socket，否则紧接着的端口检查仍会报占用
+        try {
+            Thread.sleep(1200);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        return true;
+    }
+
+    /**
+     * 进程本体是否是 Java 运行时或 Node。
+     *
+     * <p>这正是"进程类型"这一层需要的判据：凡是想杀的，都是这两个
+     * 运行时起的；而误伤对象（shell、编辑器、grep）都不是。
+     *
+     * <p><b>必须截到基名再比</b>。{@code command()} 在 Linux 上返回
+     * 完整路径（实测 {@code /root/.sdkman/.../bin/java}），在 Windows 上
+     * 才是 {@code java.exe}。直接拿返回值比"java"会永远失配，
+     * 结果是真实例一个也找不到。
+     *
+     * <p>读不到名字时返回 false（宁可不杀，不误杀）。
+     */
+    private static boolean isRuntimeProcess(ProcessHandle h) {
+        String exe;
+        try {
+            // command() 是可执行文件路径（或基名），比 commandLine() 短得多，
+            // 且不受"命令行是否可读"的权限限制
+            exe = h.info().command().orElse("");
+        } catch (Throwable t) {
+            return false;
+        }
+        int cut = Math.max(exe.lastIndexOf('/'), exe.lastIndexOf('\\'));
+        if (cut >= 0) exe = exe.substring(cut + 1);
+        String n = exe.toLowerCase();
+        if (n.endsWith(".exe")) n = n.substring(0, n.length() - 4);
+        return n.equals("java") || n.equals("javaw") || n.equals("node");
+    }
+
+    /** 读进程命令行；无权限时返回 null。 */
+    private static String commandLineOf(ProcessHandle h) {
+        try {
+            return h.info().commandLine().orElse(null);
+        } catch (Throwable t) {
+            // 安全策略或权限不足：跳过该进程
+            return null;
+        }
+    }
+
+    /**
+     * 结束一个进程树：先 SIGTERM 给它走正常退出流程，仍在世就强杀。
+     *
+     * <p>只对直接子进程调 destroy() 不够：unidbg 可能再 fork 出孙进程，
+     * 强杀父进程后孙进程会被 init 收养并继续持有端口，表现为
+     * 「端口仍被占用」。因此先收编子孙再收编自己。
+     */
+    private static void kill(ProcessHandle h) {
+        List<ProcessHandle> all = new ArrayList<>();
+        try {
+            h.descendants().forEach(all::add);
+        } catch (Throwable ignored) {
+            // 读不到子孙就只杀自己
+        }
+        all.add(h);
+        for (ProcessHandle d : all) {
+            if (!d.isAlive()) continue;
+            try {
+                d.destroy();
+                d.onExit().get(2, TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+                // 超时或不支持：落到强杀
+            }
+            if (d.isAlive()) {
+                try {
+                    d.destroyForcibly();
+                    d.onExit().get(1, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                    // 已经退出
+                }
+            }
+        }
+    }
+
+    /**
+     * 停掉在跑的实例后，顺带报告配置里的端口是否仍被占用。
+     *
+     * <p>停掉之后仍占用通常意味着有另一个实例在跑，或者杀进程需要
+     * 管理员权限 —— 值得说一句，否则用户会以为脚本没生效。
+     */
+    private static void reportPorts(int apiPort, int signPort) {
+        for (int port : new int[]{apiPort, signPort}) {
+            if (netstatBusy(port)) {
+                Log.warn("端口 " + port + " 仍被占用。若有其他实例在跑属正常；"
+                        + "否则可尝试以管理员身份运行，或查看：" + portOwner(port));
+            }
+        }
+    }
+
+    /** 该端口是否处于 LISTENING。 */
+    private static boolean netstatBusy(int port) {
+        try {
+            ProcessBuilder pb = new ProcessBuilder("netstat", "-ano");
+            pb.redirectErrorStream(true);
+            Process p = pb.start();
+            String out = new String(readAll(p.getInputStream()), StandardCharsets.UTF_8);
+            p.waitFor();
+            for (String line : out.split("\r?\n")) {
+                if (line.contains("LISTENING")
+                        && line.matches(".*:\\s*" + port + "\\s+\\d+\\s+.*")) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            // netstat 不可用时不阻断停止流程
+        }
+        return false;
+    }
+
+    private static String portOwner(int port) {
+        return "netstat -ano | findstr " + port;
     }
 
     // ==================== 签名服务 ====================
