@@ -414,6 +414,9 @@ public final class Launcher {
         String src = Config.loadedFrom();
         System.out.printf("    配置文件      : %s%n",
                 src == null ? "未找到（使用内置默认值）" : src);
+        // 版本号也一并打出来：排查「装的到底是哪一版」时，
+        // 光看配置路径不够，还得知道它自称的版本。
+        System.out.printf("    version       : %s%n", Config.version());
         boolean apiEnabled = Config.bool("api.enabled", true);
         boolean signEnabled = Config.bool("signer.enabled", true);
         System.out.printf("    api.enabled   : %s%n", apiEnabled);

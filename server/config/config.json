@@ -3,6 +3,9 @@
   "_优先级": "命令行参数 > 环境变量 > 本文件 > 内置默认值。临时覆盖可用环境变量，如 PORT=9000。",
   "_提示": "查看当前实际生效的配置：java -jar java/dist/hongguo-api.jar --config",
 
+  "version": "1.0.0",
+  "_version提示": "当前项目版本号，仅作标识用，不影响启动流程。升级新版本时一并更新。java -jar java/dist/hongguo-api.jar --version 与 --config 都会显示这里的值；构建产物 jar 的 Implementation-Version 也由它同步",
+
   "api": {
     "_说明": "API 服务（网页后端）监听设置",
     "enabled": true,

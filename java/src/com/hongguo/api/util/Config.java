@@ -79,6 +79,14 @@ public final class Config {
     /** 配置对象；解析失败或文件缺失时为 null，表示「无配置」。 */
     private static final Map<String, Object> CFG = load();
 
+    /**
+     * 找不到配置文件时的版本号兜底。
+     *
+     * <p>需与 {@code scripts/build-java.sh} / {@code .bat} 写进 MANIFEST 的
+     * {@code Implementation-Version} 保持一致。
+     */
+    private static final String VERSION_FALLBACK = "1.0.0";
+
     private static Map<String, Object> load() {
         // 允许用环境变量直接指定配置文件路径（与 HONGGUO_CONTENT_CONFIG 同一套用法）
         String custom = Log.env("HONGGUO_CONFIG", null);
@@ -203,6 +211,30 @@ public final class Config {
     /** 该键对应的环境变量名；未登记则返回 null（只能靠配置文件）。 */
     private static String envNameOf(String key) {
         return ENV_OF.get(key);
+    }
+
+    /**
+     * 当前项目版本号，取自配置文件顶层的 {@code version}。
+     *
+     * <p>版本号此前硬编码在 {@code Main} 里，与构建脚本写进 MANIFEST 的
+     * {@code Implementation-Version} 各存一份，升级时容易漏改。
+     * 现在以配置文件为单一数据源，{@code --version} 与构建产物都跟着它走。
+     *
+     * <p>刻意<b>不</b>经 {@link #str}：{@code version} 未登记在 {@link #ENV_OF}，
+     * 本就读不到环境变量；这里直接走 {@link #get}，是为了明确「版本号不是
+     * 运行期可调项」——否则将来有人给 {@code ENV_OF} 补上映射，版本号就会
+     * 悄悄变成可被环境变量覆盖，「改了配置却没生效」将难以排查。
+     *
+     * <p>配置按相对路径查找，在仓库根目录外执行会读不到；此时回落
+     * {@link #VERSION_FALLBACK}，保证 {@code --version} 在任何位置都有输出。
+     *
+     * @return 版本号；未配置或为空时返回 {@code "1.0.0"}
+     */
+    public static String version() {
+        Object o = get("version");
+        if (o == null) return VERSION_FALLBACK;
+        String s = Json.optStr(o, "").trim();
+        return s.isEmpty() ? VERSION_FALLBACK : s;
     }
 
     /** 列出全部可配置键，供 {@code --help} 与文档同步。 */

@@ -1,5 +1,6 @@
 package com.hongguo.api;
 
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 /**
@@ -24,7 +25,8 @@ public final class Main {
 
         for (String a : args) {
             if (a.equals("--version") || a.equals("-v")) {
-                System.out.println("hongguo-api 1.0.0");
+                // 版本号取自 config.json，详见 Config.version()
+                System.out.println("hongguo-api " + Config.version());
                 return;
             }
         }
