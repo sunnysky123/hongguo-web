@@ -96,13 +96,19 @@ JAR 不存在时先构建：`bash scripts/build-java.sh`（或 Windows 下双击
 
 | 组件 | 版本 | 是否必需 |
 |---|---|---|
-| Java | **>= 17**（发行包自带 `jre` Temurin 25 LTS，推荐 25） | 必需 |
+| Java | **>= 25**（发行包自带 `jre` Temurin 25 LTS） | 必需 |
 | ffmpeg | 任意近期版本 | 可选，剥离 CENC 信令让浏览器可直接播 |
 
 **clone 或发行包均可直接运行**：仓库已含构建好的 `java/dist/hongguo-api.jar`，
 目标机只需要 Java 运行时（JRE），**不需要 JDK，不需要编译**。
-JDK 17+ 仅在修改源码后重新构建时才需要 ——
+JDK 仅在修改源码后重新构建时才需要（17+ 即可编译，用 25 编译则与发行包一致）——
 构建只用 JDK 自带的 `javac` 与 `jar`，无任何第三方依赖、不用联网拉包。
+
+> **Java 低于 25 怎么办**：`java/dist/hongguo-api.jar` 用 JDK 25 编译
+> （class 版本 69），低版本运行会报 `UnsupportedClassVersionError`。
+> 要么直接用发行包自带的 `jre/`（Temurin 25 LTS），要么用你本地的 JDK（17+）
+> 重新跑一次 `bash scripts/build-java.sh` / `scripts\build-java.bat`，
+> 产物即适配你的版本（纯 javac，不联网）。
 
 ---
 
