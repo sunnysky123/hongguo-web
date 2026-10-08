@@ -160,7 +160,6 @@ public final class Launcher {
             if (java == null) {
                 Log.info("未找到 Java 运行时。");
                 Log.info("  Windows：把 JRE 放到 jre/，或安装 Temurin 25+ 并加入 PATH");
-                Log.info("  也可运行 scripts\\install-jre.bat 自动下载安装。");
                 System.exit(1);
             }
             Log.info("Java：" + java.bin);
