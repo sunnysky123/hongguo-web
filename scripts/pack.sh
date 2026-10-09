@@ -150,6 +150,7 @@ tar -C "$SRC" -cf - \
   --exclude='./jre' \
   --exclude='./.pack-cache' \
   --exclude='./dist' \
+  --exclude='./screenshot' \
   --exclude='*.log' \
   --exclude='.DS_Store' \
   --exclude='__pycache__' \
