@@ -373,6 +373,8 @@ body {
   color: var(--fg-dim);
 }
 .grow { flex: 1; }
+.api-info-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#apiInfo { max-width: min(48vw, 520px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .muted { color: var(--fg-mute); }
 .err { color: var(--err); }
 .ok { color: var(--ok); }

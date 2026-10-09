@@ -13,10 +13,8 @@
   // ---------- 基础配置 ----------
   const IS_FILE = location.protocol === 'file:';
   const DEFAULT_API = 'http://127.0.0.1:8000';
-  // 同源部署优先用当前 origin；file:// 打开则回落到本地服务
-  let API_BASE = IS_FILE
-    ? (localStorage.getItem('hg_api') || DEFAULT_API)
-    : location.origin;
+  // 用户配置优先；未配置时同源部署用当前 origin，file:// 回落到本地服务。
+  let API_BASE = localStorage.getItem('hg_api') || (IS_FILE ? DEFAULT_API : location.origin);
 
   let API_KEY = localStorage.getItem('hg_key') || '';
   const IMG_HOSTS = ['fqnovelpic.com', 'byteimg.com', 'qznovelvod.com', 'douyinpic.com', 'pstatp.com'];
@@ -27,6 +25,11 @@
   const statusEl = $('status');
   const apiInfo = $('apiInfo');
   const toastEl = $('toast');
+
+  function renderApiInfo() {
+    apiInfo.textContent = `${IS_FILE ? '本地服务' : 'API'}：${API_BASE}`;
+    apiInfo.title = API_BASE;
+  }
 
   // ---------- 工具 ----------
   let toastTimer = null;
@@ -1042,40 +1045,33 @@
     LIB.syncFavEp(ctx.seriesId, ep);
   }
 
-  /*
-   * 解码能力兜底提示。
-   *
-   * 源流是 HEVC(H.265)，默认直出不转码。若浏览器/系统缺 HEVC 解码器，
-   * <video> 会表现为：readyState 到了 4、时间轴在走，但画面全黑，
-   * 且 videoWidth/videoHeight 都是 0 —— 静默失败，用户完全看不懂。
-   *
-   * 时序坑：loadedmetadata 触发时 videoWidth 可能还是 0（解码器尚未确认），
-   * 且 play() 的 await 会在其后把状态文案覆盖掉。因此改为在
-   * loadeddata（rs>=2，解码已判定）之后再延迟一拍检查，
-   * 并用 codecBlocked 锁住提示，避免被后续播放状态冲掉。
-   */
+  // 黑屏解码失败和媒体加载错误统一通过 toast 提示，并避免同一集重复弹出。
   const HEVC_HINT = '画面无法显示：当前浏览器/系统缺少 HEVC(H.265) 解码支持。'
     + '请改用最新版 Chrome / Edge；若仍不行，可在启动前设 HG_TRANSCODE=1 '
     + '让服务端转码为 H.264（速度较慢但兼容性最好）。';
+  const PLAYBACK_ERROR_HINT = '播放失败：请检查视频源及服务端 ffmpeg 是否可用。'
+    + '若浏览器不支持 HEVC，可切换浏览器或开启 HG_TRANSCODE=1。';
   let codecChecked = false;
-  let codecBlocked = false; // 已确认无法解码：置位后不再被播放状态覆盖
+  let playbackFailureNotified = false;
+  function showPlaybackFailure(message) {
+    if (playbackFailureNotified) return;
+    playbackFailureNotified = true;
+    toast(message, 5000);
+  }
+
   function checkCodec() {
     if (codecChecked) return;
     if (videoEl.videoWidth > 0) { codecChecked = true; return; } // 解码正常
     // 能否播 H.264：用来区分「完全不支持视频」与「仅 HEVC 不支持」
     if (!videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"')) return;
     codecChecked = true;
-    codecBlocked = true;
-    $('pStatus').textContent = HEVC_HINT;
-    setStatus('解码不兼容：缺少 HEVC 支持', 'err');
-    toast('画面无法显示：缺少 HEVC 解码器', 4000);
+    showPlaybackFailure(HEVC_HINT);
   }
 
   async function play(vid) {
     if (!vid) return;
-    // codecBlocked 表示已确认本机无法解码（缺 HEVC），
-    // 此时不要用播放状态覆盖掉那条唯一有价值的提示
-    if (!codecBlocked) $('pStatus').textContent = '解密并缓冲中，首次播放需下载整集…';
+    playbackFailureNotified = false;
+    $('pStatus').textContent = '解密并缓冲中，首次播放需下载整集…';
     // <video> 无法带自定义头，密钥走查询参数
     const url = `${API_BASE}/stream?vid=${encodeURIComponent(vid)}&api_key=${encodeURIComponent(API_KEY)}`;
     videoEl.src = url;
@@ -1083,21 +1079,23 @@
       await videoEl.play();
       // 这里刻意不写集数：集数已由左侧「集数按钮」承载，
       // 状态栏只放播放相关的状态（缓冲中 / 已加载 / 播放结束 / 下一集）。
-      if (!codecBlocked) $('pStatus').textContent = '';
+      $('pStatus').textContent = '';
     } catch {
-      if (!codecBlocked) $('pStatus').textContent = '已加载，点击播放按钮开始';
+      $('pStatus').textContent = '已加载，点击播放按钮开始';
     }
   }
 
   videoEl.addEventListener('loadeddata', () => { setTimeout(checkCodec, 400); });
   // 元数据就绪时 videoWidth 可能尚未确定，先挂个延后检查兜底
   videoEl.addEventListener('loadedmetadata', () => { setTimeout(checkCodec, 1200); });
-  videoEl.addEventListener('error', () => { codecChecked = false; setTimeout(checkCodec, 300); });
+  videoEl.addEventListener('error', () => {
+    showPlaybackFailure(PLAYBACK_ERROR_HINT);
+    codecChecked = false;
+    setTimeout(checkCodec, 300);
+  });
 
   // 播完自动播下一集
-  // 注：连播逻辑本身不受解码状态影响（用户手动切集仍要能走），
-  // 只是状态文案在解码被阻断时让位给那条唯一有价值的提示。
-  const setPStatus = (t) => { if (!codecBlocked) $('pStatus').textContent = t; };
+  const setPStatus = (t) => { $('pStatus').textContent = t; };
   videoEl.addEventListener('ended', () => {
     if (!ctx.autoNext) { setPStatus('播放结束（连播已关闭）'); return; }
     if (!ctx.episodes.length) { setPStatus('播放结束'); return; } // 单集，无下一集
@@ -1433,7 +1431,7 @@
     updatePMeta(); // 无剧集 → 集数按钮隐藏
     // 重置解码检测，下次打开会重新判定（换设备/换源可能结论不同）
     codecChecked = false;
-    codecBlocked = false;
+    playbackFailureNotified = false;
   });
   // 播放器的关闭入口只有右上角的 ✕ 按钮。
   // 早期版本这里监听了遮罩层点击（e.target === playerEl）转发到 pClose，
@@ -1640,14 +1638,39 @@
     if (b) loadTab(b.dataset.tab);
   });
 
+  $('apiEditBtn').addEventListener('click', async () => {
+    const value = prompt('请输入后端 API 地址（例如 http://127.0.0.1:8000）', API_BASE);
+    if (value === null) return;
+
+    let parsed;
+    try { parsed = new URL(value.trim()); } catch {
+      toast('地址无效，请输入完整的 HTTP 或 HTTPS 地址');
+      return;
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.search || parsed.hash) {
+      toast('地址无效，请输入不带查询参数的 HTTP 或 HTTPS 地址');
+      return;
+    }
+
+    API_BASE = parsed.href.replace(/\/+$/, '');
+    localStorage.setItem('hg_api', API_BASE);
+    renderApiInfo();
+    setStatus('正在连接后端…');
+    try {
+      const h = await api('/health');
+      const ready = (h.sign_backends || []).filter((b) => b.ready).length;
+      setStatus(ready
+        ? `服务正常 · 签名后端 ${ready} 个就绪`
+        : '服务正常 · 签名后端未就绪（列表类接口仍可用）', ready ? 'ok' : '');
+      loadTab(state.tab);
+    } catch (e) {
+      handleError(e);
+    }
+  });
+
   // ---------- 启动 ----------
   (async function boot() {
-    if (IS_FILE) {
-      apiInfo.textContent = `本地服务：${API_BASE}`;
-      apiInfo.title = 'file:// 打开时使用本地后端；如后端不在 8000 端口，请修改 localStorage.hg_api';
-    } else {
-      apiInfo.textContent = `API：${API_BASE}`;
-    }
+    renderApiInfo();
     // 拿不到密钥时不在这里弹卡（刚打开页面就弹遮罩很吓人），
     // 而是转入后台重试：后端起来后自动拿到并加载首页。
     // interactive=false 时 ensureKey 仍会启动退避重试，只是不改弹层文案。
@@ -1658,14 +1681,6 @@
       setStatus(ready
         ? `服务正常 · 签名后端 ${ready} 个就绪`
         : '服务正常 · 签名后端未就绪（列表类接口仍可用）', ready ? 'ok' : '');
-      // 服务端缺 ffmpeg 时无法剥离 CENC 信令，播放器可能拒播，先给一次预警。
-      // 注：转码默认关闭（HG_TRANSCODE=1 才开），目标机器支持 HEVC 即可直出。
-      if (h.ffmpeg === false) {
-        apiInfo.textContent += ' · 未检测到 ffmpeg，视频可能无法播放';
-        apiInfo.title = '未找到 ffmpeg：无法剥离 CENC 信令。'
-          + '请安装 ffmpeg 并加入 PATH 后重启服务。'
-          + '（若画面全黑但时间轴在走，另可设 HG_TRANSCODE=1 转码为 H.264）';
-      }
     } catch {
       setStatus('正在等待后端启动…', 'err');
       view.innerHTML = `<div class="empty"><span class="big">🔌</span>
