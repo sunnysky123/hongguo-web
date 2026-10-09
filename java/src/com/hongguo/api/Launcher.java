@@ -221,7 +221,6 @@ public final class Launcher {
             Log.info("api.enabled=false：API 服务未启动，仅签名服务运行：" + signBase);
             Log.info("  按 Ctrl-C 停止");
             awaitShutdown(shuttingDown);
-            shutdown(children);
             return;
         }
 
@@ -250,7 +249,6 @@ public final class Launcher {
         // 同上：阻塞等待 Ctrl-C，由关闭钩子负责清理签名子进程。
         // 没有这一步，main 返回后 JVM 不会退出，钩子也就不会跑。
         awaitShutdown(shuttingDown);
-        shutdown(children);
     }
 
     /**
