@@ -4,7 +4,7 @@
   "_提示": "查看当前实际生效的配置：java -jar java/dist/hongguo-api.jar --config",
 
   "version": "1.0.3",
-  "_version提示": "当前项目版本号，仅作标识用，不影响启动流程。全项目唯一需要改版本号的地方，升级新版本时一并更新。java -jar java/dist/hongguo-api.jar --version 与 --config 都会显示这里的值；构建产物 jar 的 Implementation-Version 由构建时从本文件同步写入；打包产出的文件名也用它（红果web-<版本号>-<系统>-<架构>.zip）。读不到时 --version 会回落 jar manifest 里的构建期快照，再读不到则显示 unknown，不会报一个可能过期的号",
+  "_version提示": "当前项目版本号，仅作标识用，不影响启动流程。全项目唯一需要改版本号的地方，升级新版本时一并更新。java -jar java/dist/hongguo-api.jar --version 与 --config 都会显示这里的值；构建产物 jar 的 Implementation-Version 由构建时从本文件同步写入；打包产出的文件名也用它（hongguo-web-<版本号>-<系统>-<架构>.zip，用 ASCII 名避免上传 GitHub 时非 ASCII 前缀被剥离）。读不到时 --version 会回落 jar manifest 里的构建期快照，再读不到则显示 unknown，不会报一个可能过期的号",
 
   "api": {
     "_说明": "API 服务（网页后端）监听设置",
@@ -30,7 +30,7 @@
     "_说明": "启动器自身行为",
     "open_browser": true,
     "_open_browser提示": "设为 false 启动后不自动打开浏览器",
-    "_install_jre提示": "是否自动下载 JRE 由环境变量 HG_SKIP_JRE_INSTALL=1 控制（设为 1 则不下载）。它必须由 start.bat 在拉起 JVM 之前判断，因此只能走环境变量，不能放本文件"
+    "_install_jre提示": "JRE 由打包阶段按目标平台准备（内置到发行包 jre/ 目录），启动脚本不再自动下载。install-jre.bat 与 HG_SKIP_JRE_INSTALL 均已移除，本提示仅作历史说明保留"
   },
 
   "runtime": {
