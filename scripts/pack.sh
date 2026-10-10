@@ -424,7 +424,7 @@ for out in "${BUILT[@]}"; do
   done
 
   # 签名资产（缺了无法播放）
-  for f in signer/unidbg-sign.jar capture/fq_oversea/libmetasec_ml.so; do
+  for f in signer/runner/unidbg-sign.jar signer/capture/fq_oversea/libmetasec_ml.so; do
     check "$f"
   done
 

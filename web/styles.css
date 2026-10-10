@@ -610,6 +610,29 @@ body {
   text-align: center;
   align-self: center;
 }
+/* 状态文案 + 重试按钮的包裹容器 */
+.pStatus-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+}
+.retry-btn {
+  flex-shrink: 0;
+  padding: 4px 14px;
+  border: 1px solid var(--brand);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .16s;
+}
+.retry-btn:hover { background: var(--brand); color: #fff; }
+.retry-btn:active { transform: scale(.96); }
 /* 左右两列的按钮贴边 */
 .ep-btn { justify-self: start; }
 .auto-next { justify-self: end; }

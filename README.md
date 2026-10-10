@@ -41,7 +41,7 @@ Linux / macOS 下 `unzip hongguo-web-1.0.1-*.zip`）解开后，进入解压出�
 ls
 ```
 
-应看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、`capture/`、
+应看到 `web/`、`java/`、`server/`、`signer/`、`scripts/`、
 `jre/` 以及「平台说明.txt」。
 
 * Windows 资源管理器会多套一层 `hongguo-web-1.0.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
@@ -210,9 +210,11 @@ hongguo-web/
 │   └── dist/hongguo-api.jar      API 服务 JAR（已入库，clone 后可直接运行）
 │   └── build/                    编译中间产物
 ├── signer/
-│   └── unidbg-sign.jar           unidbg 签名服务（跨平台 fat JAR，未改动）
+│   ├── runner/
+│   │   └── unidbg-sign.jar   unidbg 签名服务（跨平台 fat JAR，未改动）
+│   └── capture/
+│       └── fq_oversea/       签名算法依赖的 so（路径不可改）
 ├── jre/                          Java 运行时（仅发行包内有；仓库不含）
-├── capture/fq_oversea/           签名算法依赖的 so（路径不可改）
 ├── server/
 │   ├── config/config.json        启动配置（端口、监听地址、签名开关、调优参数）
 │   ├── config/content-config.json  上游配置与 base_query

@@ -1056,6 +1056,9 @@
   function showPlaybackFailure(message) {
     if (playbackFailureNotified) return;
     playbackFailureNotified = true;
+    $('pStatus').textContent = '播放失败';
+    $('pStatus').classList.add('err');
+    $('pRetryBtn').hidden = false;
     toast(message, 5000);
   }
 
@@ -1072,6 +1075,8 @@
     if (!vid) return;
     playbackFailureNotified = false;
     $('pStatus').textContent = '解密并缓冲中，首次播放需下载整集…';
+    $('pStatus').classList.remove('err');
+    $('pRetryBtn').hidden = true;
     // <video> 无法带自定义头，密钥走查询参数
     const url = `${API_BASE}/stream?vid=${encodeURIComponent(vid)}&api_key=${encodeURIComponent(API_KEY)}`;
     videoEl.src = url;
@@ -1123,6 +1128,13 @@
     toast(ctx.autoNext ? '已开启自动连播' : '已关闭自动连播');
   });
   syncAutoNext();
+
+  // 重试按钮：播放失败后点击重新播放当前视频
+  $('pRetryBtn').addEventListener('click', () => {
+    const ep = ctx.episodes[ctx.index];
+    const vid = ep ? ep.vid : (videoEl.src ? new URL(videoEl.src).searchParams.get('vid') : '');
+    if (vid) play(vid);
+  });
 
   // ---------- 简介悬浮气泡 ----------
   // 说明：简介默认完全隐藏，只在 hover「简介」按钮时浮出。
@@ -1418,6 +1430,8 @@
     ctx.index = -1;
     $('pEpGrid').innerHTML = '';
     $('pStatus').textContent = '';
+    $('pStatus').classList.remove('err');
+    $('pRetryBtn').hidden = true;
     setAbstract('');
     toggleInfo(false);
     closeEpCard();

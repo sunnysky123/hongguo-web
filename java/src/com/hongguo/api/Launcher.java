@@ -60,11 +60,13 @@ public final class Launcher {
     /** 签名服务要求的最低 Java 主版本。 */
     private static final int JAVA_MIN_MAJOR = 17;
 
+    /** 签名服务运行目录：JAR 与 so 都收拢在 signer/ 下。 */
     private static final Path SIGN_DIR = Paths.get("signer");
-    private static final Path JAR = SIGN_DIR.resolve("unidbg-sign.jar");
+    private static final Path RUNNER_DIR = SIGN_DIR.resolve("runner");
+    private static final Path JAR = RUNNER_DIR.resolve("unidbg-sign.jar");
     /** 自带 JRE 位于仓库根目录（与 signer/ 平级，避免改动 signer 目录时被误删）。 */
     private static final Path BUNDLED_JRE = Paths.get("jre");
-    private static final Path CAPTURE = Paths.get("capture", "fq_oversea");
+    private static final Path CAPTURE = SIGN_DIR.resolve("capture").resolve("fq_oversea");
     private static final String[] REQUIRED_SO = {
             "libmetasec_ml.so", "libc++_shared.so", "ms_16777218.bin"};
 
@@ -151,8 +153,8 @@ public final class Launcher {
                 Log.info("签名资产不完整：");
                 for (String m : missing) Log.info("  - " + m);
                 Log.info("目录应为：");
-                Log.info("  <根>/signer/unidbg-sign.jar");
-                Log.info("  <根>/capture/fq_oversea/{libmetasec_ml.so,libc++_shared.so,ms_16777218.bin}");
+                Log.info("  <根>/signer/runner/unidbg-sign.jar");
+                Log.info("  <根>/signer/capture/fq_oversea/{libmetasec_ml.so,libc++_shared.so,ms_16777218.bin}");
                 System.exit(1);
             }
 
@@ -199,7 +201,7 @@ public final class Launcher {
                     Log.info("    set SIGN_PORT=" + (signPort + 1) + " && start.bat");
                 } else {
                     Log.info("签名服务 " + (readyTimeout / 1000) + "s 内未就绪");
-                    Log.info("  排查：1) Java 版本 >= 17  2) capture/fq_oversea 下三个文件是否齐全");
+                    Log.info("  排查：1) Java 版本 >= 17  2) signer/capture/fq_oversea 下三个文件是否齐全");
                 }
                 shutdown(children);
                 System.exit(1);
@@ -638,8 +640,9 @@ public final class Launcher {
         Log.info("[signer] " + String.join(" ", cmd));
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        // 关键：so 以 ../capture/ 相对路径加载，必须以 signer/ 为工作目录
-        pb.directory(SIGN_DIR.toFile());
+        // 关键：so 以 ../capture/ 相对路径加载，必须以 signer/runner/ 为工作目录，
+        // 这样 ../capture/ 正好解析到 signer/capture/。
+        pb.directory(RUNNER_DIR.toFile());
         pb.redirectErrorStream(true);
         // 签名服务只供本机 API 调用，固定绑定回环地址。
         //
@@ -887,10 +890,10 @@ public final class Launcher {
     /** 校验签名资产齐备，返回缺失清单。 */
     static List<String> checkAssets() {
         List<String> missing = new ArrayList<>();
-        if (!Files.exists(JAR)) missing.add("缺少签名 JAR：signer/unidbg-sign.jar");
+        if (!Files.exists(JAR)) missing.add("缺少签名 JAR：signer/runner/unidbg-sign.jar");
         for (String f : REQUIRED_SO) {
             if (!Files.exists(CAPTURE.resolve(f))) {
-                missing.add("缺少 so：capture/fq_oversea/" + f);
+                missing.add("缺少 so：signer/capture/fq_oversea/" + f);
             }
         }
         return missing;
