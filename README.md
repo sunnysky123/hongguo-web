@@ -2,9 +2,13 @@
 
 ## 应用预览
 
-| 主界面 | 播放器 |
-|:---:|:---:|
-| ![主界面截图](screenshot/main.png) | ![播放器界面截图](screenshot/player.png) |
+**主界面**
+
+![主界面截图](screenshot/main.png)
+
+**播放器**
+
+![播放器界面截图](screenshot/player.png)
 
 ---
 
