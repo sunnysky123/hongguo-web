@@ -1052,35 +1052,254 @@
     LIB.syncFavEp(ctx.seriesId, ep);
   }
 
-  // 黑屏解码失败和媒体加载错误统一通过 toast 提示，并避免同一集重复弹出。
-  const HEVC_HINT = '画面无法显示：当前浏览器/系统缺少 HEVC(H.265) 解码支持。'
-    + '请改用最新版 Chrome / Edge；若仍不行，可在启动前设 HG_TRANSCODE=1 '
-    + '让服务端转码为 H.264（速度较慢但兼容性最好）。';
-  const PLAYBACK_ERROR_HINT = '播放失败：请检查视频源及服务端 ffmpeg 是否可用。'
-    + '若浏览器不支持 HEVC，可切换浏览器或开启 HG_TRANSCODE=1。';
-  let codecChecked = false;
-  let playbackFailureNotified = false;
-  function showPlaybackFailure(message) {
-    if (playbackFailureNotified) return;
-    playbackFailureNotified = true;
-    $('pStatus').textContent = '播放失败';
-    $('pStatus').classList.add('err');
-    $('pRetryBtn').hidden = false;
-    toast(message, 5000);
+  // ---------- 播放不出来：统一成「当前剧集不支持浏览器播放」 ----------
+  /*
+   * 两种原因合并成同一套提示，结论都是「这集在浏览器里放不了」：
+   *   1) 上游只给 ByteVC2（字节私有的 VVC 变体），浏览器没有任何解码器；
+   *   2) 片源是 HEVC(H.265)，当前浏览器/系统没有解码能力（黑屏，进度条照走）。
+   * 差别只在「原因」和「下载后用什么播」，所以共用同一块覆盖层；
+   * 两种情况都不会自愈，重试也没意义，因此不再弹 toast，也不显示重试按钮。
+   */
+  const UNSUPPORTED_TEXT = {
+    bvc2: '上游这一集只提供 ByteVC2（字节私有的 VVC 变体）片源，'
+      + '浏览器没有对应的解码器，无法在线播放。',
+    hevc: '这一集是 HEVC(H.265) 片源，当前浏览器/系统没有 HEVC 解码能力'
+      + '（Firefox 尚未支持；Windows 上的 Chrome 需要系统解码组件）。',
+  };
+  /** 有剧集上下文：下载本集 = 往服务端排一个只含这一集的任务（与「下载」按钮同一套任务表）。 */
+  const UNSUPPORTED_ACTION = '可以点「下载本集」把它排进服务端下载任务，'
+    + '完成后在 download/<剧名>/ 目录里，再用支持该编码的播放器观看。';
+  /** 单集播放（无 series_id）：任务按剧建，没有剧就没有任务可排。 */
+  const UNSUPPORTED_ACTION_NO_SERIES = '当前是单集播放（拿不到剧集信息），'
+    + '无法排下载任务；从剧集列表进入播放器即可下载这一集。';
+
+  // 刻意不再给「已保存到 <路径>」+ 播放器建议的完成文案：
+  // 覆盖层只负责解释「为什么播不了」和「怎么下」，落盘位置与播放建议
+  // 分别由顶栏「⤓」进度卡片和 README 承载；且任务可能并入同剧批量任务，
+  // 那时并没有一条属于「本集」的路径可报，硬拼出来只会出现半截空文案。
+
+  let unsupportedEp = 0;         // 被判定分集的集号，供「下载本集」用；0 = 排不了任务
+  let unsupportedCause = '';     // 'bvc2' | 'hevc'
+  let unsupportedTaskId = '';    // 「下载本集」排的任务 id，用于把进度回显到覆盖层
+  let unsupportedTaskReused = false; // 该任务是否「并入」了同剧已在跑的任务（只影响文案）
+  let currentVid = '';         // 当前正在播的分集，供失败诊断定位
+  let codecChecked = false;    // 同一集只判定一次
+  let failureShown = false;    // 同一集只提示一次
+  let diagnosing = false;      // 诊断中：<video> 连续抛 error 时不重复问服务端
+
+  /** 当前播放分集的真实集号；单集播放或剧集列表未就绪时返回 0（排不了任务）。 */
+  function downloadEp() {
+    if (!ctx.seriesId || ctx.index < 0) return 0;
+    const e = ctx.episodes[ctx.index];
+    if (!e) return 0;
+    return Number(e.index) || (ctx.index + 1);
   }
 
+  /**
+   * 盖上「不支持」覆盖层。
+   * @param {'bvc2'|'hevc'} cause 原因：上游只有 BVC2 / 本地解不了 HEVC
+   */
+  function showUnsupported(cause) {
+    const c = cause === 'bvc2' ? 'bvc2' : 'hevc';
+    const ep = downloadEp();
+    // 同一集、同一原因再次触发（<video> 连续抛 error 时很常见）：覆盖层已开着就原样保留，
+    // 否则会把「下载中 / 已下载」的回显重置回初始态，用户以为任务没了。
+    if (!$('pUnsupported').hidden && c === unsupportedCause && ep === unsupportedEp) return;
+    unsupportedCause = c;
+    unsupportedEp = ep;
+    unsupportedTaskId = '';
+    unsupportedTaskReused = false;
+    $('pUnsupportedDesc').textContent = UNSUPPORTED_TEXT[unsupportedCause]
+      + (unsupportedEp ? UNSUPPORTED_ACTION : UNSUPPORTED_ACTION_NO_SERIES);
+    $('pDlHint').hidden = true;
+    $('pDlHint').textContent = '';
+    $('pDlOneBtn').hidden = !unsupportedEp;   // 没有剧集上下文就没有下载入口
+    $('pDlOneBtn').disabled = false;
+    $('pDlOneBtn').textContent = '下载本集';
+    $('pUnsupported').hidden = false;
+    // 状态栏与覆盖层标题说同一句话，避免两处口径不一致
+    $('pStatus').textContent = '当前剧集不支持浏览器播放';
+    $('pStatus').classList.add('err');
+    $('pRetryBtn').hidden = true;   // 编码不支持不是临时故障，重试无意义
+    try { videoEl.pause(); } catch { /* 忽略 */ }
+  }
+
+  function hideUnsupported() {
+    unsupportedEp = 0;
+    unsupportedCause = '';
+    unsupportedTaskId = '';
+    unsupportedTaskReused = false;
+    $('pUnsupported').hidden = true;
+  }
+
+  /** 真正的播放故障（取流失败、网络中断等）：状态栏 + 重试按钮，不弹 toast。 */
+  function showPlaybackError() {
+    if (failureShown) return;
+    failureShown = true;
+    $('pStatus').textContent = '播放失败，可点重试';
+    $('pStatus').classList.add('err');
+    $('pRetryBtn').hidden = false;
+  }
+
+  $('pDlDismissBtn').addEventListener('click', () => {
+    hideUnsupported();
+    $('pStatus').textContent = '';
+    $('pStatus').classList.remove('err');
+  });
+
+  /**
+   * 把任务进度写回「不支持」覆盖层。
+   * 与顶栏「⤓」看的是同一个任务（dlTasks 里的同一条），这里只做展示，不再另发请求。
+   * @param {object} t dlTasks 里的任务对象
+   * @param {'started'|'reused'} [phase] 首次提交的来源：新建任务 / 并入了已有任务
+   *   （省略时沿用上次记下的来源，轮询期间文案不会从「并入」跳回「已创建」）
+   */
+  function renderUnsupportedTask(t, phase) {
+    if (!t || !unsupportedTaskId || t.id !== unsupportedTaskId) return;
+    if ($('pUnsupported').hidden) return;
+    const btn = $('pDlOneBtn');
+    const hint = $('pDlHint');
+    const ep = unsupportedEp;
+    const reused = phase === undefined ? unsupportedTaskReused : phase === 'reused';
+    hint.hidden = false;
+    if (t.status === 'running') {
+      const head = reused
+        ? '该剧已有下载任务在进行中（' + t.done + '/' + t.total + ' 集），第 ' + ep + ' 集已并入它；'
+        : '已创建下载任务（第 ' + ep + ' 集），服务端正在下载解密；';
+      hint.textContent = head + '进度见主页右上角『⤓』，关掉页面也不影响任务。';
+      btn.disabled = true;
+      btn.textContent = '下载中…';
+      return;
+    }
+    if (t.status === 'gone') {
+      hint.textContent = '下载任务已失效（服务端可能重启过），可重试。';
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+      return;
+    }
+    const bad = (t.failed || []).find((f) => Number(f.index) === ep);
+    if (bad) {
+      hint.textContent = '第 ' + ep + ' 集下载失败：' + (bad.error || '未知原因')
+        + '。可稍后再试。';
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+      return;
+    }
+    // 成功：覆盖层不再展示「已保存到 …」与播放器建议，结果由按钮文字表达；
+    // 想看落盘目录就去顶栏「⤓」的进度卡片，那里本来就是任务的权威视图。
+    hint.hidden = true;
+    hint.textContent = '';
+    btn.disabled = true;
+    btn.textContent = '已下载';
+  }
+
+  $('pDlOneBtn').addEventListener('click', async () => {
+    const ep = unsupportedEp;
+    if (!ctx.seriesId || !ep) return;
+    const btn = $('pDlOneBtn');
+    const hint = $('pDlHint');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    hint.hidden = false;
+    hint.textContent = '正在向服务端提交下载任务…';
+    try {
+      // 与左下角「下载」按钮同一条链路，只把范围收窄成「当前这一集」：
+      // start = end = 当前集号，服务端按剧建任务，落盘到 download/<剧名>/第N集.mp4。
+      const j = await api('/download/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ series_id: ctx.seriesId, start: ep, end: ep }),
+      });
+      const s = j.task;
+      unsupportedTaskId = s.id;
+      unsupportedTaskReused = !!s.reused;
+      // 任务必须进 dlTasks：顶栏角标、进度卡片、轮询都只认这份前端任务表
+      let t = dlTasks.find((x) => x.id === s.id);
+      if (!t) {
+        t = {
+          id: s.id, series_id: s.series_id, title: s.title,
+          total: s.total, done: s.done, failed: s.failed || [],
+          status: s.status, dir: s.dir, error: null,
+        };
+        dlTasks.unshift(t);
+        syncDlEntryBtn();
+        pollDlTasks();
+      }
+      renderUnsupportedTask(t, s.reused ? 'reused' : 'started');
+    } catch (e) {
+      hint.textContent = '提交下载任务失败：' + (e && e.message ? e.message : e);
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+    }
+  });
+
+  /**
+   * 失败时向服务端确认片源归属，决定给哪一套提示：
+   *   'bvc2'      只有 ByteVC2 → 不支持层（下载后本地播）
+   *   'no-source' 取不到直链（上游空响应 / 风控 / 网络）→ 播放失败 + 重试
+   *   'playable'  片源与取流都正常 → 问题在本地解码
+   */
+  async function diagnosePlaybackFailure(vid) {
+    if (!vid) return 'playable';
+    let info = null;
+    try {
+      info = await api(`/video_url?vid=${encodeURIComponent(vid)}`);
+    } catch {
+      return 'no-source';   // 连服务端都问不到，按取流失败处理
+    }
+    if (!info) return 'no-source';
+    if (info.codec === 'bytevc2' || info.playable === false) return 'bvc2';
+    if (!info.url) return 'no-source';
+    return 'playable';
+  }
+
+  /**
+   * <video> 抛 error 时的统一入口。
+   * 先问服务端片源情况，再结合「有没有画面」定类型，
+   * 避免把 5xx / 网络问题误报成「编码不支持」（两者都会报 SRC_NOT_SUPPORTED）。
+   */
+  async function handlePlaybackError(vid) {
+    if (diagnosing) return;
+    diagnosing = true;
+    const cause = await diagnosePlaybackFailure(vid);
+    // 诊断期间用户可能已经切了集：旧结论不能盖到新集上
+    if (currentVid !== vid) { diagnosing = false; return; }
+    if (cause === 'bvc2') {
+      diagnosing = false;
+      showUnsupported('bvc2');
+      return;
+    }
+    if (cause === 'no-source') {
+      diagnosing = false;
+      showPlaybackError();
+      return;
+    }
+    // 片源正常却放不出来：再等一拍确认确实没有画面（HEVC 黑屏就是这种）
+    setTimeout(() => {
+      diagnosing = false;
+      if (currentVid !== vid) return;   // 400ms 内又切了集，别再盖层
+      if (!$('pUnsupported').hidden) return;
+      if (videoEl.videoWidth > 0) { showPlaybackError(); return; }
+      showUnsupported('hevc');
+    }, 400);
+  }
+
+  /** 黑屏检测：进度条在走、videoWidth 却为 0，说明这路编码解不了。 */
   function checkCodec() {
     if (codecChecked) return;
-    if (videoEl.videoWidth > 0) { codecChecked = true; return; } // 解码正常
-    // 能否播 H.264：用来区分「完全不支持视频」与「仅 HEVC 不支持」
+    if (videoEl.videoWidth > 0) { codecChecked = true; return; }   // 解码正常
+    // 连 H.264 都不支持的老浏览器不在这里报，交给统一失败路径
     if (!videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"')) return;
     codecChecked = true;
-    showPlaybackFailure(HEVC_HINT);
+    showUnsupported('hevc');
   }
 
   async function play(vid) {
     if (!vid) return;
-    playbackFailureNotified = false;
+    currentVid = vid;
+    hideUnsupported();   // 换集先收起上一集的「不支持」说明
+    failureShown = false;
+    codecChecked = false;   // 每集都重新判定，否则第 2 集换源后不会再检测黑屏
     $('pStatus').textContent = '解密并缓冲中，首次播放需下载整集…';
     $('pStatus').classList.remove('err');
     $('pRetryBtn').hidden = true;
@@ -1101,9 +1320,9 @@
   // 元数据就绪时 videoWidth 可能尚未确定，先挂个延后检查兜底
   videoEl.addEventListener('loadedmetadata', () => { setTimeout(checkCodec, 1200); });
   videoEl.addEventListener('error', () => {
-    showPlaybackFailure(PLAYBACK_ERROR_HINT);
-    codecChecked = false;
-    setTimeout(checkCodec, 300);
+    // 已盖上不支持层就别重复处理（<video> 可能连续触发 error）
+    if (!$('pUnsupported').hidden) return;
+    handlePlaybackError(currentVid);
   });
 
   // 播完自动播下一集
@@ -1269,9 +1488,12 @@
 
   /* ---------- 下载剧集（播放器内发起，顶栏查看进度） ---------- */
   /*
-   * 两步走：播放器里的「下载」按钮只负责选范围、发起任务（服务端后台执行，
-   * 失败自动重试，进度不依赖本页面保持打开）；进度统一在主页右上角「⤓」
-   * 按钮弹出的卡片里查看，多个剧的任务并列展示。
+   * 两个入口，同一条链路、同一份任务表：
+   *   1) 左下角「下载」按钮：选集号范围，批量下载（start~end）；
+   *   2) 播放失败覆盖层的「下载本集」：范围收窄成当前这一集（start=end）。
+   * 两者都只负责发起任务（服务端后台执行，失败自动重试，进度不依赖本页面
+   * 保持打开）；进度统一在主页右上角「⤓」按钮弹出的卡片里查看，多个剧的任务
+   * 并列展示。
    *
    * 前端本地维护一份任务表 dlTasks（服务端任务表重启即丢，这里只作视图层）：
    * 有记录才显示顶栏按钮，角标是进行中任务数；轮询只在有任务运行时开启
@@ -1420,12 +1642,14 @@
           t.status = s.status;
           t.dir = s.dir;
           if (wasRunning && s.status !== 'running') onDlTaskDone(t);
+          renderUnsupportedTask(t);   // 覆盖层开着就把 x/y 与最终结果同步过去
         } catch (e) {
           // 404 = 服务端重启后内存任务表已丢：本地标记失效，不无限重试
           if (e.status === 404) {
             t.status = 'gone';
             t.error = '任务已不存在（服务端可能已重启）';
             onDlTaskDone(t);
+            renderUnsupportedTask(t);
           }
         }
       }
@@ -1492,7 +1716,7 @@
         ? (t.error || '任务已不存在')
         : '已完成 ' + t.done + '/' + t.total + ' 集'
           + (t.failed.length > 0 ? ' · 失败 ' + t.failed.length + ' 集' : '')
-          + (t.status === 'running' ? '' : ' · 保存目录 ' + t.dir
+          + (t.status === 'running' ? '' : (t.dir ? ' · 保存目录 ' + t.dir : '')
             + (t.failed.length > 0
               ? '（失败集号：' + t.failed.map((f) => f.index).join('、') + '）' : ''));
 
@@ -1748,6 +1972,8 @@
     videoEl.removeAttribute('src');
     videoEl.load();
     playerEl.hidden = true;
+    hideUnsupported();   // 复位「本集不支持浏览器播放」说明层
+    currentVid = '';
     setVeFull(false); // 复位全屏，避免下次打开时残留
     ctx.episodes = [];
     ctx.index = -1;
@@ -1772,7 +1998,7 @@
     updatePMeta(); // 无剧集 → 集数按钮隐藏
     // 重置解码检测，下次打开会重新判定（换设备/换源可能结论不同）
     codecChecked = false;
-    playbackFailureNotified = false;
+    failureShown = false;
   });
   // 播放器的关闭入口只有右上角的 ✕ 按钮。
   // 早期版本这里监听了遮罩层点击（e.target === playerEl）转发到 pClose，

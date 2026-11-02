@@ -202,7 +202,7 @@ function buildMinimalEncryptedMp4() {
   const schi = box('schi', tenc);
   // frma：记录加密前的原始条目类型。真实 CENC 文件必有此盒，
   // 减壳时靠它把 encv/enca 改回 hvc1/mp4a——只删 sinf 不改类型，
-  // 播放器会把条目当加密流而拒绝解码（ffprobe codec_name 为 null）。
+  // 播放器会把条目当加密流而拒绝解码（表现为 codec_name 为空）。
   const frma = box('frma', Buffer.from('hvc1', 'latin1'));
   const sinf = box('sinf', concat(frma, schm, schi));
 

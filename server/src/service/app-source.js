@@ -58,14 +58,30 @@ const URL_CONSTANTS = Crypto.unhex(
 
 // ==================== 入口 ====================
 
+/** ByteVC2 的 codec_type 取值（字节 BVC2，即 H.266/VVC 系）。 */
+const CODEC_BYTEVC2 = 'bytevc2';
+
+/** 「只有 BVC2 片源」的稳定错误码，供调用方分支判断（不要靠文案匹配）。 */
+const ERR_BVC2_ONLY = 'BVC2_ONLY';
+
+/** 只有 BVC2 时给用户的文案（前端另有同义文案，改这里要同步 web/app.js）。 */
+const BVC2_ONLY_MSG = '本集仅提供 ByteVC2（H.266/VVC）片源，浏览器无法解码播放；'
+  + '可下载到本地，用支持这种编码的播放器观看（播放器选择见 README）';
+
 /**
  * 取某集的 App 直链。quality 为空 / best / auto 时按「H.264 优先、清晰度优先」
  * 自动选流；指定数值（如 1080p）时按短边尺寸升序偏好。
  *
- * @returns {Promise<{url,spadeA,encrypt,definition,size}>} 可播放轨道；
+ * @param {string|number} vid 分集 id
+ * @param {string} [quality] 清晰度偏好，空 / best / auto 为自动
+ * @param {object} [opts] 选项
+ * @param {boolean} [opts.allowBvc2] 是否接受仅 BVC2 的片源。默认 false：
+ *   BVC2 浏览器解不了，只有「下载到本地」与诊断才需要放行（放行后取到的
+ *   仍是标准 mp4，落盘可用支持 VVC 的播放器播放）
+ * @returns {Promise<{url,spadeA,encrypt,definition,size,codec}>} 可用轨道；
  *   任何一步失败都抛异常，由调用方决定是否回落老路
  */
-async function fetch(vid, quality) {
+async function fetch(vid, quality, opts) {
   if (vid === null || vid === undefined || !/^\d{1,30}$/.test(String(vid))) {
     throw new Error('分集编号无效');
   }
@@ -127,9 +143,13 @@ async function fetch(vid, quality) {
   const auto = quality === null || quality === undefined || quality === ''
     || quality === 'best' || quality === 'auto';
   const wantPx = auto ? 0 : pixelsOf(quality);
+  const allowBvc2 = !!(opts && opts.allowBvc2);
   const ok = [];
   for (const r of rows) {
-    if (r.codecRank >= 2) continue;               // 只要 H.264 / HEVC
+    // 浏览器只认 H.264 / HEVC，默认把它们之外的（含 bytevc2）全过滤掉。
+    // allowBvc2 只给「下载到本地 / 诊断」用：这些片源浏览器播不了，
+    // 但落盘后是剥净加密信令的普通 mp4，支持 ByteVC2 的播放器可以放。
+    if (r.codecRank >= 2 && !(allowBvc2 && r.codec === CODEC_BYTEVC2)) continue;
     if (!auto && wantPx > 0 && r.shortSide < wantPx) continue;
     ok.push(r);
   }
@@ -141,6 +161,14 @@ async function fetch(vid, quality) {
       ? a.shortSide - b.shortSide : a.codecRank - b.codecRank);
   }
   if (ok.length === 0) {
+    // 整集只有 BVC2：给出可判断的错误码，让上层提示「请下载后本地播放」，
+    // 而不是笼统的「暂未提供兼容片源」。
+    if (rows.length > 0 && rows.every((r) => r.codec === CODEC_BYTEVC2)) {
+      const vvcError = new Error(BVC2_ONLY_MSG);
+      vvcError.code = ERR_BVC2_ONLY;
+      vvcError.codec = CODEC_BYTEVC2;
+      throw vvcError;
+    }
     throw new Error('本集暂未提供兼容的 H.264/HEVC 片源');
   }
 
@@ -168,6 +196,7 @@ async function fetch(vid, quality) {
           encrypt: spade !== '',
           definition: r.quality === '' ? '?' : r.quality,
           size: r.size,
+          codec: r.codec,
         };
       } catch (ex) {
         last = ex;
@@ -511,6 +540,9 @@ module.exports = {
   fetch,
   resetPlaybackDevice,
   DEVICE_BASE,
+  CODEC_BYTEVC2,
+  ERR_BVC2_ONLY,
+  BVC2_ONLY_MSG,
   pyEncode,
   pixelsOf,
   cleanUrl,
