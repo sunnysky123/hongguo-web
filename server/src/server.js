@@ -6,11 +6,10 @@
  *
  * 路由：/ /health /api-key /search /rank /latest /filters
  *       /browse /episodes /play /stream /video_url /img
- *       /download /prewarm /stats /metrics/batch /admin/keys
+ *       /download/task /prewarm /stats /metrics/batch /admin/keys
  */
 
 const http = require('http');
-const fs = require('fs');
 const path = require('path');
 
 const KeyStore = require('./core/keystore');
@@ -595,40 +594,22 @@ class Server {
       return;
     }
 
-    if (method === 'GET' && pathname === '/download') {
-      let vid = q.vid;
-      const sid = q.series_id;
-      if ((vid === undefined || vid === null || vid === '')
-          && (sid === undefined || sid === null || sid === '')) {
-        Res.fail(req, res, 400, '需 vid 或 series_id');
-        return;
-      }
-      if (sid !== undefined && sid !== null && sid !== '' && (vid === undefined || vid === null || vid === '')) {
-        const meta = await Client.getEpisodes(sid);
-        const idx = Number.parseInt(q.ep !== undefined ? q.ep : '1', 10);
-        for (const eObj of Json.optArr(meta.episodes)) {
-          const e = Json.optObj(eObj);
-          if (e !== null && Json.optLong(e.index, 0) === idx) {
-            vid = Json.optStr(e.vid, '');
-            break;
-          }
-        }
-      }
-      // 下载放行 BVC2：这类片源浏览器放不了，但落盘后是剥净加密信令的
-      // 普通 mp4，用支持 ByteVC2 的播放器可以打开 —— 正是「下载到本地」的用途。
-      const file = await Stream.ensureDecrypted(vid, q.quality !== undefined ? q.quality : 'best',
-        { allowBvc2: true });
-      const m = Json.obj();
-      m.ok = true;
-      m.path = file;
-      m.size = fs.statSync(file).size;
-      Res.json(req, res, 200, m);
+    // 旧接口墓碑：GET /download（同步下载单集）已移除，统一走下面的任务制接口。
+    // 不显式拦一行的话，GET 请求会落到静态兜底、返回一份 HTML（状态码还是 200），
+    // 旧客户端只会拿到「JSON 解析失败」，排查时看不出是接口没了。
+    if (pathname === '/download') {
+      Res.fail(req, res, 404, '接口已移除：单集下载请用 POST /download/task（start = end）');
       return;
     }
 
     // ---- 批量下载剧集（任务制）----
     // POST /download/task  启动任务：{series_id, start?, end?}，后台执行，立即返回任务快照
     // GET  /download/task?id=  查询进度：done/total/failed/status
+    //
+    // 单集下载也走这里（start === end）。原先的同步 GET /download?vid= 已删除：
+    // 它把成品写进播放缓存 server/stream-cache（受 LRU 上限清理），回给用户的
+    // 路径随时会被后续播放挤掉；而任务制落盘在 download/<剧名>/第N集.mp4，
+    // 不受缓存清理影响，还能在顶栏「⤓」里看到进度。
     if (pathname === '/download/task') {
       if (method === 'POST') {
         const payload = await readJson(req);

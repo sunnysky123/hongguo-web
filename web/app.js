@@ -1066,35 +1066,54 @@
     hevc: '这一集是 HEVC(H.265) 片源，当前浏览器/系统没有 HEVC 解码能力'
       + '（Firefox 尚未支持；Windows 上的 Chrome 需要系统解码组件）。',
   };
-  const UNSUPPORTED_ACTION = '可以点「下载本集」把整集存到本地，'
-    + '再用支持该编码的播放器观看。';
+  /** 有剧集上下文：下载本集 = 往服务端排一个只含这一集的任务（与「下载」按钮同一套任务表）。 */
+  const UNSUPPORTED_ACTION = '可以点「下载本集」把它排进服务端下载任务，'
+    + '完成后在 download/<剧名>/ 目录里，再用支持该编码的播放器观看。';
+  /** 单集播放（无 series_id）：任务按剧建，没有剧就没有任务可排。 */
+  const UNSUPPORTED_ACTION_NO_SERIES = '当前是单集播放（拿不到剧集信息），'
+    + '无法排下载任务；从剧集列表进入播放器即可下载这一集。';
 
-  /** 下载成功后的补充说明：按原因给不同的播放器建议。 */
-  const DOWNLOADED_HINT = {
-    bvc2: '文件已解密成普通 mp4（无 DRM）。ByteVC2 是字节私有变体：'
-      + '红果 / 抖音官方客户端最稳；VLC 4、mpv 等标准 VVC 播放器需自行试，详见 README。',
-    hevc: '文件已解密成普通 mp4（无 DRM），可直接用系统播放器、VLC、mpv、PotPlayer 打开。'
-      + '浏览器放不了是解码能力问题，文件本身完好。',
-  };
+  // 刻意不再给「已保存到 <路径>」+ 播放器建议的完成文案：
+  // 覆盖层只负责解释「为什么播不了」和「怎么下」，落盘位置与播放建议
+  // 分别由顶栏「⤓」进度卡片和 README 承载；且任务可能并入同剧批量任务，
+  // 那时并没有一条属于「本集」的路径可报，硬拼出来只会出现半截空文案。
 
-  let unsupportedVid = '';     // 当前被判定的分集，供「下载本集」使用
-  let unsupportedCause = '';   // 'bvc2' | 'hevc'
+  let unsupportedEp = 0;         // 被判定分集的集号，供「下载本集」用；0 = 排不了任务
+  let unsupportedCause = '';     // 'bvc2' | 'hevc'
+  let unsupportedTaskId = '';    // 「下载本集」排的任务 id，用于把进度回显到覆盖层
+  let unsupportedTaskReused = false; // 该任务是否「并入」了同剧已在跑的任务（只影响文案）
   let currentVid = '';         // 当前正在播的分集，供失败诊断定位
   let codecChecked = false;    // 同一集只判定一次
   let failureShown = false;    // 同一集只提示一次
   let diagnosing = false;      // 诊断中：<video> 连续抛 error 时不重复问服务端
 
+  /** 当前播放分集的真实集号；单集播放或剧集列表未就绪时返回 0（排不了任务）。 */
+  function downloadEp() {
+    if (!ctx.seriesId || ctx.index < 0) return 0;
+    const e = ctx.episodes[ctx.index];
+    if (!e) return 0;
+    return Number(e.index) || (ctx.index + 1);
+  }
+
   /**
    * 盖上「不支持」覆盖层。
-   * @param {string} vid 分集 id
    * @param {'bvc2'|'hevc'} cause 原因：上游只有 BVC2 / 本地解不了 HEVC
    */
-  function showUnsupported(vid, cause) {
-    unsupportedVid = vid || '';
-    unsupportedCause = cause === 'bvc2' ? 'bvc2' : 'hevc';
-    $('pUnsupportedDesc').textContent = UNSUPPORTED_TEXT[unsupportedCause] + UNSUPPORTED_ACTION;
+  function showUnsupported(cause) {
+    const c = cause === 'bvc2' ? 'bvc2' : 'hevc';
+    const ep = downloadEp();
+    // 同一集、同一原因再次触发（<video> 连续抛 error 时很常见）：覆盖层已开着就原样保留，
+    // 否则会把「下载中 / 已下载」的回显重置回初始态，用户以为任务没了。
+    if (!$('pUnsupported').hidden && c === unsupportedCause && ep === unsupportedEp) return;
+    unsupportedCause = c;
+    unsupportedEp = ep;
+    unsupportedTaskId = '';
+    unsupportedTaskReused = false;
+    $('pUnsupportedDesc').textContent = UNSUPPORTED_TEXT[unsupportedCause]
+      + (unsupportedEp ? UNSUPPORTED_ACTION : UNSUPPORTED_ACTION_NO_SERIES);
     $('pDlHint').hidden = true;
     $('pDlHint').textContent = '';
+    $('pDlOneBtn').hidden = !unsupportedEp;   // 没有剧集上下文就没有下载入口
     $('pDlOneBtn').disabled = false;
     $('pDlOneBtn').textContent = '下载本集';
     $('pUnsupported').hidden = false;
@@ -1106,8 +1125,10 @@
   }
 
   function hideUnsupported() {
-    unsupportedVid = '';
+    unsupportedEp = 0;
     unsupportedCause = '';
+    unsupportedTaskId = '';
+    unsupportedTaskReused = false;
     $('pUnsupported').hidden = true;
   }
 
@@ -1126,24 +1147,87 @@
     $('pStatus').classList.remove('err');
   });
 
+  /**
+   * 把任务进度写回「不支持」覆盖层。
+   * 与顶栏「⤓」看的是同一个任务（dlTasks 里的同一条），这里只做展示，不再另发请求。
+   * @param {object} t dlTasks 里的任务对象
+   * @param {'started'|'reused'} [phase] 首次提交的来源：新建任务 / 并入了已有任务
+   *   （省略时沿用上次记下的来源，轮询期间文案不会从「并入」跳回「已创建」）
+   */
+  function renderUnsupportedTask(t, phase) {
+    if (!t || !unsupportedTaskId || t.id !== unsupportedTaskId) return;
+    if ($('pUnsupported').hidden) return;
+    const btn = $('pDlOneBtn');
+    const hint = $('pDlHint');
+    const ep = unsupportedEp;
+    const reused = phase === undefined ? unsupportedTaskReused : phase === 'reused';
+    hint.hidden = false;
+    if (t.status === 'running') {
+      const head = reused
+        ? '该剧已有下载任务在进行中（' + t.done + '/' + t.total + ' 集），第 ' + ep + ' 集已并入它；'
+        : '已创建下载任务（第 ' + ep + ' 集），服务端正在下载解密；';
+      hint.textContent = head + '进度见主页右上角『⤓』，关掉页面也不影响任务。';
+      btn.disabled = true;
+      btn.textContent = '下载中…';
+      return;
+    }
+    if (t.status === 'gone') {
+      hint.textContent = '下载任务已失效（服务端可能重启过），可重试。';
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+      return;
+    }
+    const bad = (t.failed || []).find((f) => Number(f.index) === ep);
+    if (bad) {
+      hint.textContent = '第 ' + ep + ' 集下载失败：' + (bad.error || '未知原因')
+        + '。可稍后再试。';
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+      return;
+    }
+    // 成功：覆盖层不再展示「已保存到 …」与播放器建议，结果由按钮文字表达；
+    // 想看落盘目录就去顶栏「⤓」的进度卡片，那里本来就是任务的权威视图。
+    hint.hidden = true;
+    hint.textContent = '';
+    btn.disabled = true;
+    btn.textContent = '已下载';
+  }
+
   $('pDlOneBtn').addEventListener('click', async () => {
-    const vid = unsupportedVid;
-    if (!vid) return;
+    const ep = unsupportedEp;
+    if (!ctx.seriesId || !ep) return;
     const btn = $('pDlOneBtn');
     const hint = $('pDlHint');
     btn.disabled = true;
-    btn.textContent = '下载中…';
+    btn.textContent = '提交中…';
     hint.hidden = false;
-    hint.textContent = '正在服务端下载并解密整集，稍等片刻…';
+    hint.textContent = '正在向服务端提交下载任务…';
     try {
-      // 走服务端 /download（与批量下载同一条解密流水线，HEVC 与 BVC2 都放行）
-      const r = await api(`/download?vid=${encodeURIComponent(vid)}`);
-      const mb = (r && r.size) ? (r.size / 1048576).toFixed(1) : '?';
-      hint.textContent = `已保存到：${r && r.path ? r.path : '(未知路径)'}（${mb} MB）。`
-        + (DOWNLOADED_HINT[unsupportedCause] || '');
-      btn.textContent = '已下载';
+      // 与左下角「下载」按钮同一条链路，只把范围收窄成「当前这一集」：
+      // start = end = 当前集号，服务端按剧建任务，落盘到 download/<剧名>/第N集.mp4。
+      const j = await api('/download/task', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ series_id: ctx.seriesId, start: ep, end: ep }),
+      });
+      const s = j.task;
+      unsupportedTaskId = s.id;
+      unsupportedTaskReused = !!s.reused;
+      // 任务必须进 dlTasks：顶栏角标、进度卡片、轮询都只认这份前端任务表
+      let t = dlTasks.find((x) => x.id === s.id);
+      if (!t) {
+        t = {
+          id: s.id, series_id: s.series_id, title: s.title,
+          total: s.total, done: s.done, failed: s.failed || [],
+          status: s.status, dir: s.dir, error: null,
+        };
+        dlTasks.unshift(t);
+        syncDlEntryBtn();
+        pollDlTasks();
+      }
+      renderUnsupportedTask(t, s.reused ? 'reused' : 'started');
     } catch (e) {
-      hint.textContent = '下载失败：' + (e && e.message ? e.message : e);
+      hint.textContent = '提交下载任务失败：' + (e && e.message ? e.message : e);
       btn.disabled = false;
       btn.textContent = '重试下载';
     }
@@ -1182,7 +1266,7 @@
     if (currentVid !== vid) { diagnosing = false; return; }
     if (cause === 'bvc2') {
       diagnosing = false;
-      showUnsupported(vid, 'bvc2');
+      showUnsupported('bvc2');
       return;
     }
     if (cause === 'no-source') {
@@ -1196,7 +1280,7 @@
       if (currentVid !== vid) return;   // 400ms 内又切了集，别再盖层
       if (!$('pUnsupported').hidden) return;
       if (videoEl.videoWidth > 0) { showPlaybackError(); return; }
-      showUnsupported(vid, 'hevc');
+      showUnsupported('hevc');
     }, 400);
   }
 
@@ -1207,7 +1291,7 @@
     // 连 H.264 都不支持的老浏览器不在这里报，交给统一失败路径
     if (!videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"')) return;
     codecChecked = true;
-    showUnsupported(currentVid, 'hevc');
+    showUnsupported('hevc');
   }
 
   async function play(vid) {
@@ -1404,9 +1488,12 @@
 
   /* ---------- 下载剧集（播放器内发起，顶栏查看进度） ---------- */
   /*
-   * 两步走：播放器里的「下载」按钮只负责选范围、发起任务（服务端后台执行，
-   * 失败自动重试，进度不依赖本页面保持打开）；进度统一在主页右上角「⤓」
-   * 按钮弹出的卡片里查看，多个剧的任务并列展示。
+   * 两个入口，同一条链路、同一份任务表：
+   *   1) 左下角「下载」按钮：选集号范围，批量下载（start~end）；
+   *   2) 播放失败覆盖层的「下载本集」：范围收窄成当前这一集（start=end）。
+   * 两者都只负责发起任务（服务端后台执行，失败自动重试，进度不依赖本页面
+   * 保持打开）；进度统一在主页右上角「⤓」按钮弹出的卡片里查看，多个剧的任务
+   * 并列展示。
    *
    * 前端本地维护一份任务表 dlTasks（服务端任务表重启即丢，这里只作视图层）：
    * 有记录才显示顶栏按钮，角标是进行中任务数；轮询只在有任务运行时开启
@@ -1555,12 +1642,14 @@
           t.status = s.status;
           t.dir = s.dir;
           if (wasRunning && s.status !== 'running') onDlTaskDone(t);
+          renderUnsupportedTask(t);   // 覆盖层开着就把 x/y 与最终结果同步过去
         } catch (e) {
           // 404 = 服务端重启后内存任务表已丢：本地标记失效，不无限重试
           if (e.status === 404) {
             t.status = 'gone';
             t.error = '任务已不存在（服务端可能已重启）';
             onDlTaskDone(t);
+            renderUnsupportedTask(t);
           }
         }
       }
@@ -1627,7 +1716,7 @@
         ? (t.error || '任务已不存在')
         : '已完成 ' + t.done + '/' + t.total + ' 集'
           + (t.failed.length > 0 ? ' · 失败 ' + t.failed.length + ' 集' : '')
-          + (t.status === 'running' ? '' : ' · 保存目录 ' + t.dir
+          + (t.status === 'running' ? '' : (t.dir ? ' · 保存目录 ' + t.dir : '')
             + (t.failed.length > 0
               ? '（失败集号：' + t.failed.map((f) => f.index).join('、') + '）' : ''));
 
