@@ -225,10 +225,10 @@ function toPlayable(rawPath) {
       deleteQuietly(rawPath);
       // BVC2 片源：码流本身是标准 VVC，只是标签私有。顺手改写容器标签，
       // 让 ffmpeg / VLC 4 / mpv 这些标准解析器也能打开（详见 mp4.js）。
+      // 成功时不打日志：批量下载时每一集都会命中，逐集输出会把进度刷没；
+      // 只有改写失败才值得报一条，因为那意味着成品可能还是私有标签。
       try {
-        if (Mp4.normalizeByteVc2(out)) {
-          Log.info('已把 ByteVC2 容器改写为标准 VVC：' + path.basename(out));
-        }
+        Mp4.normalizeByteVc2(out);
       } catch (e) {
         Log.warn('ByteVC2 容器改写失败（' + name + '）：' + errMsg(e));
       }
