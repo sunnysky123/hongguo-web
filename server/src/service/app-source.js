@@ -24,6 +24,7 @@
 const crypto = require('crypto');
 const Spade = require('../core/spade');
 const { getPlaybackDevice, resetPlaybackDevice } = require('./playback-device');
+const Guard = require('./upstream-guard');
 const Crypto = require('../util/crypto');
 const Http = require('../util/http');
 const Json = require('../util/json');
@@ -277,6 +278,14 @@ const DEVICE_BASE = {
  * !'()* 也要编成 %XX（resolution=1280*2772 里的 * 就在此列）。
  */
 async function postPlayback(body, identity) {
+  // 熔断中：直接快速失败，不再打上游（整剧下载会连试几十集，每次都白等超时）
+  if (!Guard.acquire()) {
+    const blocked = new Error(Guard.blockedMessage());
+    blocked.code = 'PLAYBACK_CIRCUIT_OPEN';
+    blocked.deviceId = identity.device_id;
+    throw blocked;
+  }
+
   const q = Object.assign({}, DEVICE_BASE, {
     device_id: identity.device_id,
     iid: identity.iid,
@@ -303,18 +312,22 @@ async function postPlayback(body, identity) {
   const text = res.text();
   const j = Json.parseObject(text);
   if (j === null || Json.optObj(j.data) === null) {
-    // 空响应：设备身份被拒 / IP 风控 / 接口变更。调试时打出原始响应。
+    // 空响应：上游软拦截。2026-11-02 复测结论 —— 匿名设备注册正常、换新身份
+    // 也无效、多部剧全空且 100ms 内就返回，更像按请求特征/出口 IP 整体限流，
+    // 不再是 10-27 那次的「设备身份被拒」；文案不要再把排查引向设备与本地网络。
     const emptyBody = text.trim() === '';
-    const hint = emptyBody ? '（空响应，疑似设备身份被拒）' : '';
+    const hint = emptyBody ? '（空响应，疑似上游限流，非本机网络问题）' : '';
     const error = new Error('App 接口未返回 data' + hint
       + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
         ? '（原始响应: ' + text + '）' : ''));
     if (emptyBody) {
       error.code = 'PLAYBACK_EMPTY_RESPONSE';
       error.deviceId = identity.device_id;
+      Guard.reportEmpty();
     }
     throw error;
   }
+  Guard.reportOk();
   return j;
 }
 

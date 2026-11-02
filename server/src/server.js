@@ -18,6 +18,7 @@ const Client = require('./service/client');
 const Download = require('./service/download');
 const Res = require('./service/res');
 const Stream = require('./service/stream');
+const Guard = require('./service/upstream-guard');
 const Http = require('./util/http');
 const Json = require('./util/json');
 const Config = require('./util/config');
@@ -799,7 +800,9 @@ async function urlInfo(vid) {
       info.detail = e.message;
       return info;
     }
-    Log.warn('取直链失败 (' + vid + '): ' + (e && e.message ? e.message : e));
+    // 同一句失败在整剧下载 / 批量预热时会刷几十遍，交给 Guard 节流：
+    // 首次告警 + 每 60 秒最多一条汇总，其余只计数。
+    Guard.warn('取直链失败 (' + vid + '): ' + (e && e.message ? e.message : e));
   }
   return info;
 }
