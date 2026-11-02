@@ -440,6 +440,21 @@ function pureSign() {
   check('branchOf 取值在 0/1/2', branches[0] + branches[1] + branches[2] === 32,
     'b0=' + branches[0] + ' b1=' + branches[1] + ' b2=' + branches[2]);
   check('32 个 _rticket 中可避开 branch==1', safe > 0, 'safe=' + safe + '/32');
+
+  // hashF13 三分支固定向量（期望值取自参考实现）。
+  // branch 0 曾因展开循环里的 di0 不前进而整段算错，签名被上游判为无效。
+  const vectors = [
+    ['aid=8662&device_id=700000000000000&ts=1793620000', 1793620000,
+      'b93e5ea3f34b2ed5f8ebfecbe8968697bb6cb5c68df4652941caf652a366f2d875118e1b'],
+    ['aid=8662&device_id=700000000000000&ts=1793620001', 1793620001,
+      '9453f32d76ec1dc1df9e872f5d57f1957e141939'],
+    ['aid=8662&device_id=700000000000000&ts=1793620008', 1793620008,
+      '7f94ed4fe11d6eabf12267334798b66cd57d2845'],
+  ];
+  for (const [q, ts2, want] of vectors) {
+    const got = PureSign.hashF13Hex(q, '{"a":1}', ts2);
+    check('hashF13 向量 ts=' + ts2, got === want, got === want ? '' : got);
+  }
 }
 
 /** 12. 剧集解析：title 清洗（上游 title 实为简介）。 */
@@ -868,8 +883,8 @@ function searchPageSlice() {
 function appSource() {
   section('19. App 取址链路：合成身份 / query 编码 / URL 白名单');
 
-  check('pyEncode: * 编码为 %2A（resolution=1280*2772）',
-    AppSource.pyEncode('1280*2772') === '1280%2A2772',
+  check('pyEncode: * 原样保留（resolution=1280*2772，签名按原文计算）',
+    AppSource.pyEncode('1280*2772') === '1280*2772',
     AppSource.pyEncode('1280*2772'));
   check("pyEncode: !'() 编码为 %21%27%28%29",
     AppSource.pyEncode("a!b'c(d)e") === 'a%21b%27c%28d%29e',

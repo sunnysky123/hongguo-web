@@ -483,7 +483,7 @@ node server/src/main.js --selftest
 | 8 | JSON 往返与数字语义（转义、精度、skipNulls、`1.0` 输出为 `1`） |
 | 9 | 播放缓存路径（`.play.mp4` 变体命中判定） |
 | 10 | 设备身份 device_id（格式、注入 base_query、落盘、`iid` 保持 0） |
-| 11 | 本地纯代码签名：六个头齐全、时间戳一致、branchOf 取值与 branch==1 抖动规避 |
+| 11 | 本地纯代码签名：六个头齐全、时间戳一致、branchOf 取值与 branch==1 抖动规避、hashF13 三分支固定向量 |
 | 12 | 剧集解析：title 清洗（上游 title 实为简介）；官网回落的简介/标签/连载状态透传与 `degraded` 标记 |
 | 13 | 本地链路密钥管理；管理口令生成与 apikeys.json 持久化 |
 | 14 | moov 定位：尾部 moov 也能找到（流式解密前置） |
@@ -534,7 +534,7 @@ hongguo-web/
 │   │   │   └── safeguards.js  风控 + 缓存 + 节流
 │   │   ├── service/
 │   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
-│   │   │   ├── app-source.js  App 取址链路（注册身份 + 无签名 + fallback_api）
+│   │   │   ├── app-source.js  App 取址链路（注册身份 + 六头签名 + 备用域重试）
 │   │   │   ├── playback-device.js 匿名播放设备注册（ttEncrypt）
 │   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
 │   │   │   ├── download.js    剧集批量下载（任务管理 / 重试 / 落盘）
@@ -721,13 +721,16 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 两个接口上游要求带签名，若请求未带或签名不被接受，上游返回 HTTP 200 + 空 body。
 本项目对这两个接口固定走本地签名，正常不会触发；若偶发出现，稍后重试即可。
 
-播放取址（b 域名 `multi_video_model/v1`）自 2026-10-27 起改为
-「匿名设备注册 + 无签名请求」：先由 `playback-device.js` 注册匿名设备，
-再用注册返回的 device_id/iid 取流（成功结果同进程复用；失败结果只缓存
-60 秒，之后自动重新注册，无需重启）。
-该接口返回空 body 通常意味着匿名设备身份被上游拒绝或 IP 风控，与签名无关；
-预热重试时会失效本次身份并重新注册，最多重试 2 次。若仍失败，先确认设备注册
-是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
+播放取址（b 域名 `multi_video_model/v1`）自 2026-11-02 起恢复**签名请求**：
+先由 `playback-device.js` 注册匿名设备，再用 device_id / iid 组装 query，
+末尾追加 `ts`（秒）与 `_rticket`（毫秒，递增到 `branchOf === 0` 为止），
+并带上六个签名头（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）。
+签名全部在本进程内算，没有外部依赖。
+
+该接口返回空 body 时，基本是「同一设备身份短时间内重复取流」被判重
+（同一集隔几秒单发就能过，本机实测与签名、出口 IP 都无关）。此时会丢掉
+这一次的注册结果、重新注册，换新身份再打备用域 `api5-normal-hl.fqnovel.com`；
+两次都空才计入熔断。调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应。
 若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com` 的网络问题
 （DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
@@ -848,8 +851,11 @@ A：默认**隐藏**。剧集名右侧有个「简介」小按钮，鼠标移上
 简介为空时按钮自动隐藏，不占位。
 
 > 数据来源：简介取自 App 详情接口（`multi_video_detail/preload/v1`）。
-> 该接口偶发返回 HTTP 200 + 空 `data`（风控软拦截，实测约 1/3 的请求，与签名无关、
-> 也不区分剧集），本项目会先重试 2 次（间隔 400ms）；仍为空则回落官网分集页，
+> 该接口偶发返回 HTTP 200 + 空 `data`（风控软拦截）。此前实测约 1/3 的请求为空，
+> 根因是 `hashF13` 的 branch 0 展开循环里少推进了一次状态（`di0` 未前进），
+> 导致 `queryBodyTs` 与 `check` 算错、签名被上游判为无效；2026-11-02 已修复，
+> 日志里不应再出现固定比例的空响应。重试仍保留 2 次（间隔 400ms）作为兜底；
+> 仍为空则回落官网分集页，
 > 官网数据里的简介、标签、连载状态同样会透传（`meta.degraded = true`，
 > 缓存 10 分钟而不是 6 小时，便于尽快重试 App 链路）。
 > 因此简介一般不会整段消失；若某部剧确实没有简介（新剧未填），按钮会隐藏。
