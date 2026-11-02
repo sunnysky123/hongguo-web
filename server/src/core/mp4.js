@@ -898,6 +898,224 @@ function stripEncryption(inPath, outPath) {
   }
 }
 
+// ==================== ByteVC2 → 标准 VVC（容器改写） ====================
+
+/** VVC 参数集的 NAL 类型（ISO/IEC 23090-3）：VPS / SPS / PPS。 */
+const NAL_VPS = 14;
+const NAL_SPS = 15;
+const NAL_PPS = 16;
+
+/** 视觉样本条目的固定头长度（与 entryFixedHeader 的 78 一致）。 */
+const VISUAL_FIXED = 78;
+
+/**
+ * 取 NAL 负载的前 n 个字节，途中拆掉 emulation prevention（00 00 03 → 00 00）。
+ *
+ * 为什么需要：SPS 开头的 profile_tier_level 是定长字段，但负载里可能插入
+ * 0x03 防止与起始码混淆；不去掉就会整体错位一个字节，解析出的 profile/level
+ * 全是错的。前几个字节里出现这种序列的概率极低，但不能假设不发生。
+ */
+function rbspHead(nal, n) {
+  const out = [];
+  for (let i = 2; i < nal.length && out.length < n; i++) {
+    if (nal[i] === 0x00 && nal[i + 1] === 0x00 && nal[i + 2] === 0x03) {
+      out.push(0x00, 0x00);
+      i += 2;
+    } else {
+      out.push(nal[i]);
+    }
+  }
+  return out;
+}
+
+/**
+ * 从一个样本里挑出 VPS / SPS / PPS。
+ *
+ * 为什么从样本取而不是从私有配置盒取：bv2C 的内部布局是字节私有的
+ * （尾部还带 "NBVC2-v1.3.4.8" 版本串），没有公开规范；而 mp4 的每个
+ * 关键帧前都原样带着这三类 NAL，格式是标准 VVC，取出来即可直接用。
+ *
+ * @param {Buffer} sample 样本数据，内部是「4 字节长度 + NAL」的序列
+ * @returns {{vps: Buffer|null, sps: Buffer|null, pps: Buffer|null}}
+ */
+function paramSetsOf(sample) {
+  const out = { vps: null, sps: null, pps: null };
+  let p = 0;
+  while (p + 4 <= sample.length) {
+    const n = sample.readUInt32BE(p);
+    if (n === 0 || p + 4 + n > sample.length) break;
+    const nal = sample.subarray(p + 4, p + 4 + n);
+    if (nal.length >= 2) {
+      const t = (nal[1] >> 3) & 0x1f;
+      if (t === NAL_VPS && out.vps === null) out.vps = nal;
+      else if (t === NAL_SPS && out.sps === null) out.sps = nal;
+      else if (t === NAL_PPS && out.pps === null) out.pps = nal;
+    }
+    p += 4 + n;
+    if (out.vps !== null && out.sps !== null && out.pps !== null) break;
+  }
+  return out;
+}
+
+/**
+ * 组装标准 VvcDecoderConfigurationRecord（ISO/IEC 14496-15）。
+ *
+ * 字段来源：profile / tier / level / 色度格式 / 子层数都取自 SPS 开头的
+ * profile_tier_level；位深按 8 bit 填 —— 红果的 BVC2 片源目前都是 8 bit，
+ * 真出现 10 bit 时这里会标错，但解码走的是码流里的 SPS，不影响画面。
+ *
+ * 开头 4 个 0 不是填充：ffmpeg 的 mov 解析器把 vvcC 内容当作
+ * 「4 字节 version/flags + record」，去掉这 4 字节会按 NAL 长度前缀误读，
+ * 直接报 "Invalid NAL unit size"。
+ *
+ * @returns {Buffer|null} 记录本身；参数集不全时返回 null
+ */
+function buildVvcConfig(sets) {
+  if (sets.sps === null || sets.pps === null) return null;
+  const h = rbspHead(sets.sps, 5);
+  if (h.length < 2) return null;
+  const maxSubMinus1 = (h[1] >> 5) & 0x07;
+  const chroma = (h[1] >> 3) & 0x03;
+  const ptlPresent = h[1] & 0x01;
+  let profile = 1;
+  let tier = 0;
+  let level = 105;
+  let constraint = 0;
+  if (ptlPresent === 1 && h.length >= 5) {
+    profile = (h[2] >> 1) & 0x7f;
+    tier = h[2] & 0x01;
+    level = h[3];
+    // 这一个字节本身就是 frame_only(1)+multilayer(1)+constraint(6)，
+    // 与记录里 num_bytes_constraint_info=1 时的写法恰好一致，直接照搬。
+    constraint = h[4];
+  }
+  const numSub = (maxSubMinus1 & 0x07) + 1;
+  const packed = ((numSub & 0x07) << 4) | (0x01 << 2) | (chroma & 0x03);
+
+  const arrays = [];
+  if (sets.vps !== null) arrays.push([NAL_VPS, sets.vps]);
+  arrays.push([NAL_SPS, sets.sps]);
+  arrays.push([NAL_PPS, sets.pps]);
+
+  let need = 13 + 1;
+  for (const a of arrays) need += 5 + a[1].length;
+  const b = Buffer.alloc(need + 8);
+  let p = 0;
+  b.writeUInt32BE(0, p); p += 4;                    // version/flags 占位
+  b[p] = 0xff; p += 1;                              // 0xf8 | lenSizeMinus1(3)<<1 | ptlPresent
+  b.writeUInt16BE(packed, p); p += 2;               // olsIdx/子层数/恒定帧率/色度格式
+  b[p] = 0x1f; p += 1;                              // bitDepthMinus8(0) << 5 | 保留 11111
+  b[p] = 0x01; p += 1;                              // num_bytes_constraint_info
+  b[p] = ((profile & 0x7f) << 1) | (tier & 0x01); p += 1;
+  b[p] = level & 0xff; p += 1;
+  b[p] = constraint & 0xff; p += 1;
+  b[p] = arrays.length; p += 1;
+  for (const a of arrays) {
+    b[p] = 0x80 | (a[0] & 0x1f); p += 1;            // array_completeness=1
+    b.writeUInt16BE(1, p); p += 2;                  // numNalus
+    b.writeUInt16BE(a[1].length, p); p += 2;
+    a[1].copy(b, p); p += a[1].length;
+  }
+  return b.subarray(0, p);
+}
+
+/**
+ * 把减壳后的 ByteVC2 成品**就地**改写成标准 VVC 容器（bvc2 → vvc1）。
+ *
+ * 为什么值得做：实测这一集（1080p/30fps/4223 帧）的码流本身就是标准
+ * H.266/VVC —— 抽出样本转 Annex B 后，ffmpeg 的 vvc 解码器 4223 帧全解、
+ * 0 错误；换成标准 vvcC 后同一份 mp4 也能整片解开。上游只是把样本条目名
+ * 写成私有的 bvc2、配置盒写成私有的 bv2C，标准解析器（ffmpeg / VLC 4 /
+ * mpv）按标签找解码器，认不出就直接拒播。改完标签，这些播放器就能打开
+ * 下载下来的文件，而码流一个字节都没动。
+ *
+ * 不改文件布局：新配置记录比私有盒短，余下空间补 0；盒子尺寸与文件长度
+ * 都不变，因此 stco/co64 的 chunk 偏移无需平移，失败风险极小。
+ *
+ * @returns {boolean} true 表示已完成改写（或本来就不需要改写）
+ */
+function normalizeByteVc2(file) {
+  let fd = null;
+  try {
+    const fileLen = fs.statSync(file).size;
+    if (fileLen < 4096) return false;
+
+    fd = fs.openSync(file, 'r+');
+    // 先低成本探一下：没有私有配置盒就说明不是 BVC2（或已改写过）。
+    // 这样常规的缓存命中只需读 1MB，不必把整个 moov 段载入内存。
+    const probeLen = Math.min(fileLen, 1024 * 1024);
+    const probe = Buffer.alloc(probeLen);
+    readFullySync(fd, probe, 0, probeLen, 0);
+    if (probe.indexOf('bv2C') < 0) return false;
+
+    const headLen = Math.min(fileLen, 64 * 1024 * 1024);
+    const head = Buffer.alloc(headLen);
+    readFullySync(fd, head, 0, headLen, 0);
+    const v = ByteView.whole(head);
+
+    // 顶层盒链：只需要 moov（成品由 strip0 产出，moov 一定在 mdat 之前）
+    const top = parseBoxes(v, 0, headLen);
+    let moov = null;
+    for (const b of top) if (b.type === 'moov') { moov = b; break; }
+    if (moov === null) return false;
+
+    // 找第一个样本条目是 bvc2 的视频轨
+    let entry = null;
+    let stblBox = null;
+    for (const trak of moov.childrenOf('trak')) {
+      const mdia = trak.child('mdia');
+      const minf = mdia === null ? null : mdia.child('minf');
+      const stbl = minf === null ? null : minf.child('stbl');
+      if (stbl === null) continue;
+      const stsd = stbl.child('stsd');
+      if (stsd === null || stsd.children.length === 0) continue;
+      if (stsd.children[0].type !== 'bvc2') continue;
+      entry = stsd.children[0];
+      stblBox = stbl;
+      break;
+    }
+    if (entry === null) return false;
+
+    // bvc2 不在 CONTAINERS 里，parseBoxes 不会往下走，手动从固定头之后解析
+    const kids = parseBoxes(v, entry.start + entry.headerSize + VISUAL_FIXED, entry.end());
+    let cfg = null;
+    for (const c of kids) if (c.type === 'bv2C') { cfg = c; break; }
+    if (cfg === null) return false;
+
+    // 参数集取自第一个样本（IDR，前面必带 VPS/SPS/PPS）
+    const track = new Track();
+    readSampleTable(v, stblBox, track);
+    if (track.sampleCount === 0) return false;
+    const sOff = track.offsets[0];
+    const sSize = track.sizes[0];
+    if (!(sOff > 0) || !(sSize > 0) || sOff + sSize > fileLen) return false;
+    const sample = Buffer.alloc(sSize);
+    readFullySync(fd, sample, 0, sSize, sOff);
+
+    const sets = paramSetsOf(sample);
+    const record = buildVvcConfig(sets);
+    if (record === null) return false;
+
+    const room = cfg.size - cfg.headerSize;
+    if (record.length > room) return false;
+
+    // 就地改写：条目名、配置盒名、配置盒内容（补 0 到原长度）
+    fs.writeSync(fd, Buffer.from('vvc1', 'latin1'), 0, 4, entry.start + 4);
+    fs.writeSync(fd, Buffer.from('vvcC', 'latin1'), 0, 4, cfg.start + 4);
+    const payload = Buffer.alloc(room);
+    record.copy(payload);
+    fs.writeSync(fd, payload, 0, room, cfg.payloadStart());
+    return true;
+  } catch (ignore) {
+    // 任何意外都按「没改」处理：文件仍是可用的 BVC2 成品，只是标签没换
+    return false;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch (ignore) { /* 忽略 */ }
+    }
+  }
+}
+
 function strip0(inPath, outPath) {
   const fileLen = fs.statSync(inPath).size;
   if (fileLen < 16) return false;
@@ -1255,4 +1473,5 @@ module.exports = {
   ivToCounter, ctrCounter, counterFor,
   decryptTrack, trackBaseIvCandidates, avccSelfOk, pickProbeIndices, verifyVideoIv,
   stripEncryption,
+  normalizeByteVc2,
 };

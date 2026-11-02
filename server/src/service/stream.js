@@ -222,6 +222,15 @@ function toPlayable(rawPath) {
   try {
     if (Mp4.stripEncryption(rawPath, out)) {
       deleteQuietly(rawPath);
+      // BVC2 片源：码流本身是标准 VVC，只是标签私有。顺手改写容器标签，
+      // 让 ffmpeg / VLC 4 / mpv 这些标准解析器也能打开（详见 mp4.js）。
+      try {
+        if (Mp4.normalizeByteVc2(out)) {
+          Log.info('已把 ByteVC2 容器改写为标准 VVC：' + path.basename(out));
+        }
+      } catch (e) {
+        Log.warn('ByteVC2 容器改写失败（' + name + '）：' + errMsg(e));
+      }
       return out;
     }
     Log.warn('减壳不适用（布局超出支持范围）：' + name
@@ -421,6 +430,9 @@ async function ensureDecrypted(vid, quality, opts) {
     const hit = cachedPath(vid, quality);
     if (hit === null) return null;
     if (!allowBvc2 && isBvc2File(hit)) return null;
+    // 早期下载的 BVC2 成品还带着私有标签，顺手升级成标准 VVC。
+    // 幂等：已是 vvc1 的文件读前 1MB 就返回，不做任何写入。
+    try { Mp4.normalizeByteVc2(hit); } catch (e) { /* 改不动就按原样用 */ }
     return hit;
   };
 
