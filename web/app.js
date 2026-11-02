@@ -1052,35 +1052,170 @@
     LIB.syncFavEp(ctx.seriesId, ep);
   }
 
-  // 黑屏解码失败和媒体加载错误统一通过 toast 提示，并避免同一集重复弹出。
-  const HEVC_HINT = '画面无法显示：当前浏览器/系统缺少 HEVC(H.265) 解码支持。'
-    + '请改用最新版 Chrome / Edge；若仍不行，可在启动前设 HG_TRANSCODE=1 '
-    + '让服务端转码为 H.264（速度较慢但兼容性最好）。';
-  const PLAYBACK_ERROR_HINT = '播放失败：请检查视频源及服务端 ffmpeg 是否可用。'
-    + '若浏览器不支持 HEVC，可切换浏览器或开启 HG_TRANSCODE=1。';
-  let codecChecked = false;
-  let playbackFailureNotified = false;
-  function showPlaybackFailure(message) {
-    if (playbackFailureNotified) return;
-    playbackFailureNotified = true;
-    $('pStatus').textContent = '播放失败';
+  // ---------- 播放不出来：统一成「当前剧集不支持浏览器播放」 ----------
+  /*
+   * 两种原因合并成同一套提示，结论都是「这集在浏览器里放不了」：
+   *   1) 上游只给 ByteVC2（字节私有的 VVC 变体），浏览器没有任何解码器；
+   *   2) 片源是 HEVC(H.265)，当前浏览器/系统没有解码能力（黑屏，进度条照走）。
+   * 差别只在「原因」和「下载后用什么播」，所以共用同一块覆盖层；
+   * 两种情况都不会自愈，重试也没意义，因此不再弹 toast，也不显示重试按钮。
+   */
+  const UNSUPPORTED_TEXT = {
+    bvc2: '上游这一集只提供 ByteVC2（字节私有的 VVC 变体）片源，'
+      + '浏览器没有对应的解码器，无法在线播放。',
+    hevc: '这一集是 HEVC(H.265) 片源，当前浏览器/系统没有 HEVC 解码能力'
+      + '（Firefox 尚未支持；Windows 上的 Chrome 需要系统解码组件）。',
+  };
+  const UNSUPPORTED_ACTION = '可以点「下载本集」把整集存到本地，'
+    + '再用支持该编码的播放器观看。';
+
+  /** 下载成功后的补充说明：按原因给不同的播放器建议。 */
+  const DOWNLOADED_HINT = {
+    bvc2: '文件已解密成普通 mp4（无 DRM）。ByteVC2 是字节私有变体：'
+      + '红果 / 抖音官方客户端最稳；VLC 4、mpv 等标准 VVC 播放器需自行试，详见 README。',
+    hevc: '文件已解密成普通 mp4（无 DRM），可直接用系统播放器、VLC、mpv、PotPlayer 打开。'
+      + '浏览器放不了是解码能力问题，文件本身完好。',
+  };
+
+  let unsupportedVid = '';     // 当前被判定的分集，供「下载本集」使用
+  let unsupportedCause = '';   // 'bvc2' | 'hevc'
+  let currentVid = '';         // 当前正在播的分集，供失败诊断定位
+  let codecChecked = false;    // 同一集只判定一次
+  let failureShown = false;    // 同一集只提示一次
+  let diagnosing = false;      // 诊断中：<video> 连续抛 error 时不重复问服务端
+
+  /**
+   * 盖上「不支持」覆盖层。
+   * @param {string} vid 分集 id
+   * @param {'bvc2'|'hevc'} cause 原因：上游只有 BVC2 / 本地解不了 HEVC
+   */
+  function showUnsupported(vid, cause) {
+    unsupportedVid = vid || '';
+    unsupportedCause = cause === 'bvc2' ? 'bvc2' : 'hevc';
+    $('pUnsupportedDesc').textContent = UNSUPPORTED_TEXT[unsupportedCause] + UNSUPPORTED_ACTION;
+    $('pDlHint').hidden = true;
+    $('pDlHint').textContent = '';
+    $('pDlOneBtn').disabled = false;
+    $('pDlOneBtn').textContent = '下载本集';
+    $('pUnsupported').hidden = false;
+    // 状态栏与覆盖层标题说同一句话，避免两处口径不一致
+    $('pStatus').textContent = '当前剧集不支持浏览器播放';
     $('pStatus').classList.add('err');
-    $('pRetryBtn').hidden = false;
-    toast(message, 5000);
+    $('pRetryBtn').hidden = true;   // 编码不支持不是临时故障，重试无意义
+    try { videoEl.pause(); } catch { /* 忽略 */ }
   }
 
+  function hideUnsupported() {
+    unsupportedVid = '';
+    unsupportedCause = '';
+    $('pUnsupported').hidden = true;
+  }
+
+  /** 真正的播放故障（取流失败、网络中断等）：状态栏 + 重试按钮，不弹 toast。 */
+  function showPlaybackError() {
+    if (failureShown) return;
+    failureShown = true;
+    $('pStatus').textContent = '播放失败，可点重试';
+    $('pStatus').classList.add('err');
+    $('pRetryBtn').hidden = false;
+  }
+
+  $('pDlDismissBtn').addEventListener('click', () => {
+    hideUnsupported();
+    $('pStatus').textContent = '';
+    $('pStatus').classList.remove('err');
+  });
+
+  $('pDlOneBtn').addEventListener('click', async () => {
+    const vid = unsupportedVid;
+    if (!vid) return;
+    const btn = $('pDlOneBtn');
+    const hint = $('pDlHint');
+    btn.disabled = true;
+    btn.textContent = '下载中…';
+    hint.hidden = false;
+    hint.textContent = '正在服务端下载并解密整集，稍等片刻…';
+    try {
+      // 走服务端 /download（与批量下载同一条解密流水线，HEVC 与 BVC2 都放行）
+      const r = await api(`/download?vid=${encodeURIComponent(vid)}`);
+      const mb = (r && r.size) ? (r.size / 1048576).toFixed(1) : '?';
+      hint.textContent = `已保存到：${r && r.path ? r.path : '(未知路径)'}（${mb} MB）。`
+        + (DOWNLOADED_HINT[unsupportedCause] || '');
+      btn.textContent = '已下载';
+    } catch (e) {
+      hint.textContent = '下载失败：' + (e && e.message ? e.message : e);
+      btn.disabled = false;
+      btn.textContent = '重试下载';
+    }
+  });
+
+  /**
+   * 失败时向服务端确认片源归属，决定给哪一套提示：
+   *   'bvc2'      只有 ByteVC2 → 不支持层（下载后本地播）
+   *   'no-source' 取不到直链（上游空响应 / 风控 / 网络）→ 播放失败 + 重试
+   *   'playable'  片源与取流都正常 → 问题在本地解码
+   */
+  async function diagnosePlaybackFailure(vid) {
+    if (!vid) return 'playable';
+    let info = null;
+    try {
+      info = await api(`/video_url?vid=${encodeURIComponent(vid)}`);
+    } catch {
+      return 'no-source';   // 连服务端都问不到，按取流失败处理
+    }
+    if (!info) return 'no-source';
+    if (info.codec === 'bytevc2' || info.playable === false) return 'bvc2';
+    if (!info.url) return 'no-source';
+    return 'playable';
+  }
+
+  /**
+   * <video> 抛 error 时的统一入口。
+   * 先问服务端片源情况，再结合「有没有画面」定类型，
+   * 避免把 5xx / 网络问题误报成「编码不支持」（两者都会报 SRC_NOT_SUPPORTED）。
+   */
+  async function handlePlaybackError(vid) {
+    if (diagnosing) return;
+    diagnosing = true;
+    const cause = await diagnosePlaybackFailure(vid);
+    // 诊断期间用户可能已经切了集：旧结论不能盖到新集上
+    if (currentVid !== vid) { diagnosing = false; return; }
+    if (cause === 'bvc2') {
+      diagnosing = false;
+      showUnsupported(vid, 'bvc2');
+      return;
+    }
+    if (cause === 'no-source') {
+      diagnosing = false;
+      showPlaybackError();
+      return;
+    }
+    // 片源正常却放不出来：再等一拍确认确实没有画面（HEVC 黑屏就是这种）
+    setTimeout(() => {
+      diagnosing = false;
+      if (currentVid !== vid) return;   // 400ms 内又切了集，别再盖层
+      if (!$('pUnsupported').hidden) return;
+      if (videoEl.videoWidth > 0) { showPlaybackError(); return; }
+      showUnsupported(vid, 'hevc');
+    }, 400);
+  }
+
+  /** 黑屏检测：进度条在走、videoWidth 却为 0，说明这路编码解不了。 */
   function checkCodec() {
     if (codecChecked) return;
-    if (videoEl.videoWidth > 0) { codecChecked = true; return; } // 解码正常
-    // 能否播 H.264：用来区分「完全不支持视频」与「仅 HEVC 不支持」
+    if (videoEl.videoWidth > 0) { codecChecked = true; return; }   // 解码正常
+    // 连 H.264 都不支持的老浏览器不在这里报，交给统一失败路径
     if (!videoEl.canPlayType('video/mp4; codecs="avc1.42E01E"')) return;
     codecChecked = true;
-    showPlaybackFailure(HEVC_HINT);
+    showUnsupported(currentVid, 'hevc');
   }
 
   async function play(vid) {
     if (!vid) return;
-    playbackFailureNotified = false;
+    currentVid = vid;
+    hideUnsupported();   // 换集先收起上一集的「不支持」说明
+    failureShown = false;
+    codecChecked = false;   // 每集都重新判定，否则第 2 集换源后不会再检测黑屏
     $('pStatus').textContent = '解密并缓冲中，首次播放需下载整集…';
     $('pStatus').classList.remove('err');
     $('pRetryBtn').hidden = true;
@@ -1101,9 +1236,9 @@
   // 元数据就绪时 videoWidth 可能尚未确定，先挂个延后检查兜底
   videoEl.addEventListener('loadedmetadata', () => { setTimeout(checkCodec, 1200); });
   videoEl.addEventListener('error', () => {
-    showPlaybackFailure(PLAYBACK_ERROR_HINT);
-    codecChecked = false;
-    setTimeout(checkCodec, 300);
+    // 已盖上不支持层就别重复处理（<video> 可能连续触发 error）
+    if (!$('pUnsupported').hidden) return;
+    handlePlaybackError(currentVid);
   });
 
   // 播完自动播下一集
@@ -1748,6 +1883,8 @@
     videoEl.removeAttribute('src');
     videoEl.load();
     playerEl.hidden = true;
+    hideUnsupported();   // 复位「本集不支持浏览器播放」说明层
+    currentVid = '';
     setVeFull(false); // 复位全屏，避免下次打开时残留
     ctx.episodes = [];
     ctx.index = -1;
@@ -1772,7 +1909,7 @@
     updatePMeta(); // 无剧集 → 集数按钮隐藏
     // 重置解码检测，下次打开会重新判定（换设备/换源可能结论不同）
     codecChecked = false;
-    playbackFailureNotified = false;
+    failureShown = false;
   });
   // 播放器的关闭入口只有右上角的 ✕ 按钮。
   // 早期版本这里监听了遮罩层点击（e.target === playerEl）转发到 pClose，

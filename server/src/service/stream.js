@@ -5,18 +5,19 @@
  * 流程：videoTrack 取 spade_a 与直链（AppSource 取址，见 videoTrack 注释）
  *      -> 下载密文 mp4
  *      -> spade 解包 content key（纯字节变换）
- *      -> AES-128-CTR 全轨解密（视频+音频各用自身逐样本 IV）
- *      -> 纯 JS 减壳剥离 CENC 信令成普通 mp4（布局不符时回落 ffmpeg remux）
+ *      -> 纯 JS 减壳剥离 CENC 信令成普通 mp4
  *      -> 缓存复用
+ *
+ * 全程不调用任何外部程序：解码交给浏览器，服务端只做解密与信令剥离，
+ * 源流（H.264 / HEVC）原样直出，服务端不转码。
  *
  * 同步 / 异步：凡发网络或文件异步 IO 的入口（videoTrack / download /
  * offlineDecrypt / ensureDecrypted / prewarm）都是 async（返回 Promise）；
- * 路径计算、缓存清理、ffmpeg 探测等纯计算保持同步。
+ * 路径计算、缓存清理、减壳等纯计算保持同步。
  */
 
 const fs = require('fs');
 const path = require('path');
-const { spawn, spawnSync } = require('child_process');
 
 const Mp4 = require('../core/mp4');
 const Spade = require('../core/spade');
@@ -25,7 +26,7 @@ const Log = require('../util/log');
 const Http = require('../util/http');
 const Safeguards = require('../core/safeguards');
 const AppSource = require('../service/app-source');
-const { readFullySync, escapeRe } = require('../util/common');
+const { readFullySync } = require('../util/common');
 
 /** 默认保留的缓存文件数上限。 */
 const CACHE_MAX_FILES = 30;
@@ -49,13 +50,14 @@ function cacheDir() {
 const INFLIGHT = new Map();
 
 /** 取该集指定清晰度的轨道信息。 */
-async function videoTrack(vid, quality) {
+async function videoTrack(vid, quality, opts) {
   // 播放直链统一走 App 取址：b 域名 multi_video_model/v1 + fallback_api 二次请求。
   // 上游 a 域名 preload/v1 已对部分分集（后集高发）不再返回 video_model；
   // 官网播放页曾是明文直链来源，但改版后 SSR 不再输出 main_url，
   // 仅剩 360p 预览 contentUrl（付费集下载即 404），故不再走官网。
   // 拿不到时返回 null，由 ensureDecrypted 报「无直链 / video_model」。
-  return AppSource.fetch(String(vid), quality);
+  // opts.allowBvc2 见 AppSource.fetch：只有下载/诊断才放行 BVC2 片源。
+  return AppSource.fetch(String(vid), quality, opts);
 }
 
 // ==================== 下载 ====================
@@ -175,69 +177,11 @@ async function offlineDecrypt(spadeAB64, ctPath, outPath) {
     fs.closeSync(out);
   }
 
-  // 尝试生成可播放成品：纯 JS 减壳，失败回落 ffmpeg remux；
-  // 两条路都失败则保留已解密的原始容器（raw），调用方按 raw 返回。
-  const playable = await toPlayable(outPath);
+  // 生成可播放成品：纯 JS 减壳。减壳失败时保留已解密的原始容器（raw），
+  // 调用方按 raw 返回（内容仍是明文，只是还带着 CENC 信令）。
+  const playable = toPlayable(outPath);
 
   return new DecryptOut(playable, key, decrypted, outSize);
-}
-
-/** 编码器描述。 */
-class Encoder {
-  constructor(name, args) {
-    this.name = name;
-    this.args = args;
-  }
-}
-
-let cachedEncoder = null;
-let encoderProbed = false;
-
-/**
- * 探测本机可用的 H.264 编码器（结果缓存）。
- * 优先级：环境变量指定 > libx264 > libopenh264 > h264_qsv / h264_v4l2m2m。
- */
-function h264Encoder() {
-  if (encoderProbed) return cachedEncoder;
-  encoderProbed = true;
-
-  const preset = Log.env('HG_H264_ENCODER', '').trim();
-  let list = '';
-  try {
-    const r = spawnSync('ffmpeg', ['-hide_banner', '-encoders'], {
-      encoding: 'utf8', maxBuffer: 8 << 20,
-    });
-    if (r.error) return null;
-    list = r.stdout || '';
-  } catch (e) {
-    return null;
-  }
-  const fl = list;
-  const has = (n) => new RegExp('\\s' + escapeRe(n) + '\\s').test(fl);
-
-  const table = [];
-  if (preset !== '' && has(preset)) {
-    table.push(new Encoder(preset, []));
-  } else {
-    table.push(new Encoder('libx264', ['-preset', 'veryfast', '-crf', '23']));
-    table.push(new Encoder('libopenh264', ['-b:v', '2500k']));
-    table.push(new Encoder('h264_qsv', ['-preset', 'veryfast']));
-    table.push(new Encoder('h264_v4l2m2m', []));
-  }
-  for (const e of table) {
-    if (has(e.name)) {
-      // pix_fmt 与 crf 只对 x264/openh264 有意义
-      e.args.push('-pix_fmt', 'yuv420p');
-      cachedEncoder = e;
-      return cachedEncoder;
-    }
-  }
-  return null;
-}
-
-/** 是否开启转码：仅 HG_TRANSCODE=1（默认关闭）。 */
-function transcodeWanted() {
-  return Log.env('HG_TRANSCODE', '') === '1';
 }
 
 /** 删除文件，失败仅忽略（调用方都已有兜底路径）。 */
@@ -250,19 +194,19 @@ function deleteQuietly(f) {
 }
 
 /**
- * 生成可播放成品（同步执行）。
+ * 生成可播放成品（纯同步，不调用任何外部程序）。
  *
- * 默认路径：纯 JS 减壳（见 mp4.js 的 stripEncryption）——样本数据此时
- * 已是明文，只需从 moov 删掉加密信令盒（sinf/senc/saio/saiz/pssh）并把
- * chunk 偏移平移过来，mdat 原样拷贝，不依赖 ffmpeg。
- * 减壳不适用（布局异常等）或显式开启转码时，回落 ffmpeg remux；
- * 两条路都失败返回 null，由调用方保留已解密的 raw 文件。
+ * 样本数据此时已是明文，只需从 moov 里删掉加密信令盒
+ * （sinf/senc/saio/saiz/pssh）、把 chunk 偏移平移过来，mdat 原样拷贝
+ * —— 具体实现见 mp4.js 的 stripEncryption。
  *
- * HONGGUO_PURE_STRIP=0 可强制走 ffmpeg（A/B 对比或应急回退）。
+ * 源流编码（H.264 / HEVC）原样直出，不做转码：主流浏览器的 <video>
+ * 都能解 HEVC，服务端再转一遍只会多花十几秒并损失画质。
  *
- * 本函数是内部实现：等 ffmpeg 时不阻塞事件循环，故为 async。
+ * @returns {string|null} 成品路径；减壳不适用时返回 null，
+ *   由调用方保留已解密的 raw 文件。
  */
-async function toPlayable(rawPath) {
+function toPlayable(rawPath) {
   const name = path.basename(rawPath);
   const dir = path.dirname(rawPath);
   // 对齐 Node 的 path.parse().name：先剥掉最后一段扩展名，再剥 .raw 段。
@@ -275,99 +219,20 @@ async function toPlayable(rawPath) {
   if (stem === '') stem = name;
   const out = path.join(dir, stem + '.play.mp4');
 
-  // 转码默认关闭（HG_TRANSCODE=1 才开）
-  const want = transcodeWanted();
-
-  // ---- 默认路径：纯 JS 减壳 ----
-  if (!want && Log.env('HONGGUO_PURE_STRIP', '') !== '0') {
-    try {
-      if (Mp4.stripEncryption(rawPath, out)) {
-        deleteQuietly(rawPath);
-        return out;
-      }
-      Log.warn('纯 JS 减壳不适用，回落 ffmpeg remux：' + path.basename(rawPath));
-    } catch (e) {
-      Log.warn('纯 JS 减壳异常，回落 ffmpeg remux：' + e);
-    }
-  }
-
-  const enc = want ? h264Encoder() : null;
-  if (want && enc === null) {
-    Log.info('HG_TRANSCODE=1 但未找到可用的 H.264 编码器，本集退回 -c copy；'
-      + '若浏览器不支持 HEVC 会黑屏');
-  }
-
-  const cmd = [
-    '-y', '-loglevel', 'error', '-i', rawPath,
-    '-c:v', enc !== null ? enc.name : 'copy',
-  ];
-  if (enc !== null) cmd.push(...enc.args);
-  cmd.push('-c:a', enc !== null ? 'aac' : 'copy');
-  if (enc !== null) cmd.push('-b:a', '128k');
-  cmd.push('-movflags', '+faststart', out);
-
   try {
-    // stderr 已合并进 stdout：限长收集（4KB），仅失败时用于诊断——
-    // 旧实现整段丢弃，remux 失败时控制台只剩「remux 失败」无线索。
-    const p = spawn('ffmpeg', cmd, { stdio: ['ignore', 'pipe', 'pipe'] });
-    const errChunks = [];
-    let errLen = 0;
-    const collect = (chunk) => {
-      if (errLen >= 4096) return;
-      const take = chunk.length > (4096 - errLen)
-        ? chunk.subarray(0, 4096 - errLen) : chunk;
-      errChunks.push(Buffer.from(take));
-      errLen += take.length;
-    };
-    p.stderr.on('data', collect);
-    // stdout 读掉即可，防止管道写满挂死 ffmpeg
-    p.stdout.on('data', () => { /* discard */ });
-
-    const outcome = await new Promise((resolve) => {
-      let settled = false;
-      const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        // 无超时的等待会让卡死的 ffmpeg 永久挂住请求线程
-        try { p.kill('SIGKILL'); } catch (ignore) { /* 忽略 */ }
-        resolve({ timeout: true });
-      }, 60000);
-      p.on('error', () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ error: true });
-      });
-      p.on('close', (code) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve({ code });
-      });
-    });
-
-    if (outcome.timeout) {
-      Log.warn('ffmpeg remux 超时（60s）已强杀：' + path.basename(rawPath));
-      return null;
+    if (Mp4.stripEncryption(rawPath, out)) {
+      deleteQuietly(rawPath);
+      return out;
     }
-    if (outcome.error) {
-      Log.warn('ffmpeg remux 异常（' + path.basename(rawPath) + '）');
-      return null;
-    }
-
-    const ok = outcome.code === 0 && fs.existsSync(out) && fs.statSync(out).size > 0;
-    if (!ok) {
-      const detail = Buffer.concat(errChunks).toString().trim();
-      Log.warn('ffmpeg remux 失败（' + path.basename(rawPath) + '）'
-        + (detail === '' ? '' : '：' + detail));
-      return null;
-    }
-    deleteQuietly(rawPath);
-    return out;
+    Log.warn('减壳不适用（布局超出支持范围）：' + name
+      + '，本集保留 .raw.mp4 —— 内容已解密，但 CENC 信令未除，可能无法直接播放');
   } catch (e) {
-    Log.warn('ffmpeg remux 异常（' + path.basename(rawPath) + '）：' + e);
-    return null;
+    Log.warn('减壳异常（' + name + '）：' + errMsg(e));
   }
+  // 失败时可能已写出半成品（selfcheck 不过关的那份），必须清掉，
+  // 否则下次 cachedPath 会把它当成可用成品命中。
+  deleteQuietly(out);
+  return null;
 }
 
 // ==================== 缓存 ====================
@@ -376,15 +241,15 @@ async function toPlayable(rawPath) {
 class Paths3 {
   constructor(out, play, raw) {
     this.out = out;    // 未加密直下的成品
-    this.play = play;  // 加密解密 + remux 后的成品
-    this.raw = raw;    // remux 前的解密产物
+    this.play = play;  // 解密 + 减壳后的成品
+    this.raw = raw;    // 减壳前的解密产物
   }
 }
 
 /**
  * 计算某集指定清晰度的缓存路径。
  *
- * 注意 play 路径：offlineDecrypt 末尾会 remux 出「基名.play.mp4」（并删掉 raw），
+ * 注意 play 路径：offlineDecrypt 末尾会减壳出「基名.play.mp4」（并删掉 raw），
  * 而基名不含.raw 段，所以加密内容最终落盘的是 <vid>_<q>.play.mp4。
  * 三个变体都必须参与命中判定，否则加密集永远命中不了缓存。
  */
@@ -407,6 +272,40 @@ function cachedPath(vid, quality) {
     }
   }
   return null;
+}
+
+/**
+ * 落盘的 mp4 是不是 ByteVC2（浏览器解不了的私有编码）。
+ *
+ * 为什么要判断：/download 会放行 BVC2 并把它解密、减壳后缓存下来。
+ * 之后用户回到网页点「播放」，ensureDecrypted 若直接命中这份缓存，
+ * 就会把 BVC2 文件丢给 <video> —— 浏览器只能黑屏，前端连「不支持」的
+ * 提示都拿不到。所以命中缓存时也要认编码，BVC2 的一律不给播放路径。
+ *
+ * 判定方式：减壳后样本条目名是 bvc2（frma 原样），未减壳时条目是 encv
+ * 且内部带私有解码配置盒 bv2C。两种形态都看，顺带把标准 VVC 也算进来。
+ */
+function isBvc2File(file) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+    const buf = Buffer.alloc(1024 * 1024);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    if (n < 32) return false;
+    const head = buf.subarray(0, n);
+    if (head.indexOf('bv2C') >= 0) return true;   // 私有解码配置盒
+    const i = head.indexOf('stsd');
+    if (i < 0 || i + 24 > n) return false;
+    // stsd 里第一个样本条目的类型：size(4) type(4) 之后的 +4
+    const tag = head.toString('latin1', i + 20, i + 24);
+    return tag === 'bvc2' || tag === 'bv2C' || tag === 'vvc1' || tag === 'vvi1';
+  } catch (e) {
+    return false;   // 读不出来就当普通文件，交给后续流程处理
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (e) { /* 忽略 */ }
+    }
+  }
 }
 
 /** 预热失败后的最大重试次数（不含首次尝试），即最多共尝试 3 次。 */
@@ -436,6 +335,9 @@ async function prewarmOnce(vid, quality) {
       return await ensureDecrypted(vid, quality);
     } catch (e) {
       last = e;
+      // 「只有 BVC2」是确定性结果：上游这一集根本没有 H.264/HEVC 版本，
+      // 重试得到的还是同样结论，直接抛出，省掉两次无意义的下载尝试。
+      if (e !== null && e !== undefined && e.code === AppSource.ERR_BVC2_ONLY) throw e;
       Log.warn('预热失败 ' + vid + '（第 ' + (attempt + 1) + '/'
         + (PREWARM_MAX_RETRIES + 1) + ' 次尝试）：' + errMsg(e));
     }
@@ -466,6 +368,12 @@ function runPrewarm(vid, quality) {
   prewarmActive++;
   prewarmOnce(vid, quality)
     .catch((e) => {
+      // BVC2 不是故障，只是浏览器放不了：降级成一条 info，避免用户看到
+      // 满屏「预热失败」告警而误以为程序坏了。
+      if (e !== null && e !== undefined && e.code === AppSource.ERR_BVC2_ONLY) {
+        Log.info('跳过预热 ' + vid + '：本集仅 BVC2 片源，浏览器不可播（可下载后本地观看）');
+        return;
+      }
       Log.warn('预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
         + ' 次仍不成功，' + errMsg(e));
     })
@@ -499,27 +407,43 @@ async function prewarm(vid, quality) {
 }
 
 /** 确保某集已解密并落盘缓存，返回可播放 mp4 路径。 */
-async function ensureDecrypted(vid, quality) {
+async function ensureDecrypted(vid, quality, opts) {
   fs.mkdirSync(cacheDir(), { recursive: true });
   const p = cachePaths(vid, quality);
+  const allowBvc2 = !!(opts && opts.allowBvc2);
 
-  const hit = cachedPath(vid, quality);
+  /**
+   * 取可用缓存：未放行 BVC2 时，缓存里的 BVC2 成品不算命中
+   * （否则会把浏览器播不了的文件交给 <video>），交由取源逻辑抛出
+   * BVC2_ONLY，让上层给出「下载后本地播放」的提示。
+   */
+  const usableCache = () => {
+    const hit = cachedPath(vid, quality);
+    if (hit === null) return null;
+    if (!allowBvc2 && isBvc2File(hit)) return null;
+    return hit;
+  };
+
+  const hit = usableCache();
   if (hit !== null) {
-    // 只有残留的 raw（缺 play 成品）才需要补一次减壳/remux
+    // 只有残留的 raw（缺 play 成品）才需要补做一次减壳
     if (hit !== p.raw) return hit;
-    const r = await toPlayable(p.raw);
+    const r = toPlayable(p.raw);
     if (r !== null) return r;
   }
 
-  const outKey = p.out;
+  // 放行 BVC2 与不放行取到的是同一集、但可能不是同一条轨道（前者会退到
+  // BVC2 档），落盘文件名相同，故并发去重键要把该选项带进去，避免两种
+  // 语义的请求互相复用到对方的结果。
+  const outKey = p.out + (allowBvc2 ? '|bvc2' : '');
   const exist = INFLIGHT.get(outKey);
   if (exist !== undefined) return exist; // 同集并发只解一次
 
   const task = (async () => {
-    const again = cachedPath(vid, quality);
+    const again = usableCache();
     if (again !== null && again !== p.raw) return again;
 
-    const t = await videoTrack(vid, quality);
+    const t = await videoTrack(vid, quality, opts);
     if (t === null || t === undefined || t.url === null
         || t.url === undefined || t.url === '') {
       throw new Error('无直链 / video_model');
@@ -533,7 +457,7 @@ async function ensureDecrypted(vid, quality) {
     // 省去旧实现里 .enc -> raw 的那次整文件拷贝（13MB/集的纯浪费）。
     await download(t.url, p.raw);
     const r = await offlineDecrypt(t.spadeA, p.raw, p.raw);
-    // 减壳/remux 成功时返回 .play.mp4，失败时回退 raw
+    // 减壳成功时返回 .play.mp4，失败时回退 raw
     const res = (r.path !== null && r.path !== undefined) ? r.path : p.raw;
     // 落盘完成后再清理：此时 play/raw 已是成品，不会误删半成品
     pruneCache();
@@ -617,33 +541,9 @@ function pruneCache(limit) {
   }
 }
 
-// ==================== 环境探测 ====================
-
-let cachedFfmpeg = null;
-
-/** ffmpeg 是否可用（同步检查一次并缓存）。 */
-function ffmpegAvailable() {
-  if (cachedFfmpeg !== null) return cachedFfmpeg;
-  try {
-    const r = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' });
-    cachedFfmpeg = !r.error && r.status === 0;
-  } catch (e) {
-    cachedFfmpeg = false;
-  }
-  return cachedFfmpeg;
-}
-
-/** 转码是否启用（HG_TRANSCODE=1 且找到编码器）。 */
-function transcodeEnabled() {
-  return transcodeWanted() && h264EncoderName() !== null;
-}
-
-/** 当前实际使用的 H.264 编码器名（未启用/不可用时返回 null）。 */
-function h264EncoderName() {
-  if (!transcodeWanted()) return null;
-  if (!ffmpegAvailable()) return null;
-  const e = h264Encoder();
-  return e !== null ? e.name : null;
+/** 只有 BVC2 片源时给用户看的说明（文案与 AppSource 同源，避免两处漂移）。 */
+function bvc2OnlyMessage() {
+  return AppSource.BVC2_ONLY_MSG;
 }
 
 module.exports = {
@@ -655,9 +555,7 @@ module.exports = {
   ensureDecrypted,
   prewarm,
   pruneCache,
-  ffmpegAvailable,
-  transcodeEnabled,
-  h264EncoderName,
+  bvc2OnlyMessage,
   DecryptOut,
   Paths3,
   CACHE_MAX_FILES,

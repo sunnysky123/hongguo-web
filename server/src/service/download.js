@@ -225,7 +225,9 @@ async function downloadOne(t, ep) {
     try {
       // ensureDecrypted 自带同集并发去重与磁盘缓存：播过的一集会直接命中，
       // 复制即可，不必重新下载解密。
-      const src = await Stream.ensureDecrypted(String(ep.vid), 'best');
+      // allowBvc2：下载与在线播放的诉求不同 —— 浏览器解不了的 ByteVC2
+      // 片源照样要能存到本地，否则「只有新编码」的剧会整批失败。
+      const src = await Stream.ensureDecrypted(String(ep.vid), 'best', { allowBvc2: true });
       const dest = path.join(t.dir, '第' + idx + '集.mp4');
       fs.mkdirSync(t.dir, { recursive: true });
       const tmp = dest + '.part';

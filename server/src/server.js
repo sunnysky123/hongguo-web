@@ -285,9 +285,6 @@ class Server {
       m.uptime_s = Math.floor((Date.now() - this.startTime) / 1000);
       m.sign_backends = Server.signBackends();
       m.api_host = Client.HOST;
-      m.ffmpeg = Stream.ffmpegAvailable();
-      m.transcode = Stream.transcodeEnabled();
-      m.h264_encoder = Stream.h264EncoderName();
       Res.json(req, res, 200, m);
       return;
     }
@@ -533,6 +530,8 @@ class Server {
         row.size = info.size;
         row.definition = info.definition;
         row.url_is_http = info.url_is_http;
+        row.codec = info.codec;
+        row.playable = info.playable;
         row.stream_url = '/stream?vid=' + vid;
         out.push(row);
       }
@@ -577,6 +576,11 @@ class Server {
       m.url = info.url;
       m.size = info.size;
       m.definition = info.definition;
+      m.codec = info.codec;
+      // playable=false 表示本集只有浏览器解不了的片源（ByteVC2/VVC），
+      // 前端据此提示「下载后本地播放」，不要去设 <video>.src。
+      m.playable = info.playable;
+      m.detail = info.detail;
       Res.json(req, res, 200, m);
       return;
     }
@@ -610,7 +614,10 @@ class Server {
           }
         }
       }
-      const file = await Stream.ensureDecrypted(vid, q.quality !== undefined ? q.quality : 'best');
+      // 下载放行 BVC2：这类片源浏览器放不了，但落盘后是剥净加密信令的
+      // 普通 mp4，用支持 ByteVC2 的播放器可以打开 —— 正是「下载到本地」的用途。
+      const file = await Stream.ensureDecrypted(vid, q.quality !== undefined ? q.quality : 'best',
+        { allowBvc2: true });
       const m = Json.obj();
       m.ok = true;
       m.path = file;
@@ -762,7 +769,18 @@ class Server {
     }
 
     const quality = q.quality !== undefined ? q.quality : 'best';
-    const file = await Stream.ensureDecrypted(vid, quality);
+    let file;
+    try {
+      file = await Stream.ensureDecrypted(vid, quality);
+    } catch (e) {
+      // 只有 BVC2 片源：浏览器解不了，但能下载。用 415 + 错误码把结论
+      // 交给前端，让它给出「下载后本地播放」的引导，而不是笼统的 500。
+      if (e !== null && e !== undefined && e.code === 'BVC2_ONLY') {
+        Res.fail(req, res, 415, e.message, 'code', 'BVC2_ONLY');
+        return;
+      }
+      throw e;
+    }
     if (filename === null) filename = vid + '.mp4';
     await Res.streamFile(req, res, file, vid, filename);
   }
@@ -779,7 +797,9 @@ async function urlInfo(vid) {
   const info = Json.obj();
   if (vid === null || vid === undefined || vid === '') return info;
   try {
-    const t = await Stream.videoTrack(vid, 'best');
+    // 放行 BVC2 只为了「诊断」：能拿到编码类型就能告诉前端为什么播不了；
+    // 是否可用由 playable 字段表达，前端不会拿这个 url 去 <video> 播放。
+    const t = await Stream.videoTrack(vid, 'best', { allowBvc2: true });
     if (t === null || t === undefined || t.url === null || t.url === undefined || t.url === '') {
       return info;
     }
@@ -787,7 +807,17 @@ async function urlInfo(vid) {
     info.size = t.size;
     info.definition = t.definition;
     info.url_is_http = String(t.url).startsWith('http');
+    info.codec = t.codec;
+    info.playable = t.codec !== 'bytevc2';
+    if (!info.playable) info.detail = Stream.bvc2OnlyMessage();
   } catch (e) {
+    // 只有 BVC2：不是故障，是已知的编码不兼容，按 info 级别记录即可。
+    if (e !== null && e !== undefined && e.code === 'BVC2_ONLY') {
+      info.codec = 'bytevc2';
+      info.playable = false;
+      info.detail = e.message;
+      return info;
+    }
     Log.warn('取直链失败 (' + vid + '): ' + (e && e.message ? e.message : e));
   }
   return info;

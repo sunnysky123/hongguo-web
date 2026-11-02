@@ -299,13 +299,13 @@ function json() {
 
 /**
  * 9. 播放缓存路径。
- * 背景：解密末尾 remux 产出 "<vid>_<q>.play.mp4" 并删掉 raw，
+ * 背景：解密末尾减壳产出 "<vid>_<q>.play.mp4" 并删掉 raw，
  * 而早期实现只探测 "<vid>_<q>.mp4"，导致加密内容永远不命中缓存。
  */
 function cachePaths() {
   section('9. 播放缓存路径：.play.mp4 变体必须参与命中判定');
   const p = Stream.cachePaths('7688396322021329982', 'best');
-  check('remux 产出名与 play 路径一致',
+  check('减壳产出名与 play 路径一致',
     path.basename(p.play) === '7688396322021329982_best.play.mp4',
     path.basename(p.play));
   check('play 与 out 是不同文件', p.play !== p.out, '');
@@ -515,22 +515,9 @@ function episodeTitle() {
     Json.optStr(Json.optObj(Client.webEpisodesToDetail(Json.obj()).meta).abstract, 'x') === '', '');
 }
 
-/** 13. 解码兼容性：默认不转码（直出 HEVC）。 */
-function transcode() {
-  section('13. 解码兼容性：默认不转码（直出 HEVC）');
-  check('ffmpeg 可用', Stream.ffmpegAvailable(), '');
-  check('默认关闭转码', !Stream.transcodeEnabled(), '');
-  if (Stream.transcodeEnabled()) {
-    check('转码时能找到 H.264 编码器',
-      Stream.h264EncoderName() !== null, '' + Stream.h264EncoderName());
-  } else {
-    console.log('  · 转码已关闭（HG_TRANSCODE=1 可开启 HEVC -> H.264）');
-  }
-}
-
-/** 14. 本地链路密钥。 */
+/** 13. 本地链路密钥。 */
 function keyStore() {
-  section('14. 本地链路密钥');
+  section('13. 本地链路密钥');
   const ks = KeyStore.store();
   ks.ensureBootstrap();
   check('至少一把启用密钥', ks.countEnabled() >= 1, '' + ks.countEnabled());
@@ -566,9 +553,9 @@ function indexOfType(hay, type) {
   return -1;
 }
 
-/** 15. moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */
+/** 14. moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */
 function moovLocator() {
-  section('15. moov 定位：尾部 moov 也能找到（流式解密前置）');
+  section('14. moov 定位：尾部 moov 也能找到（流式解密前置）');
   try {
     // 头部形态（faststart）：moov 应在 ftyp 之后立刻出现
     const head = Mp4Fixture.buildMinimalEncryptedMp4();
@@ -627,7 +614,7 @@ function moovLocator() {
  * 整文件 Buffer 路径完全一致 —— 这是流式改造的等价性证明。
  */
 function streamingDecrypt() {
-  section('16. 流式解密与整文件解密结果一致');
+  section('15. 流式解密与整文件解密结果一致');
   let tmp = null;
   try {
     const fixture = Mp4Fixture.buildMinimalEncryptedMp4();
@@ -692,9 +679,9 @@ function streamingDecrypt() {
   }
 }
 
-/** 17. 缓存上限与过期清扫。 */
+/** 16. 缓存上限与过期清扫。 */
 async function cacheBounds() {
-  section('17. 缓存上限与过期清扫');
+  section('16. 缓存上限与过期清扫');
   try {
     const savedMax = process.env.HG_MEM_CACHE_MAX;
     process.env.HG_MEM_CACHE_MAX = '50';
@@ -748,9 +735,9 @@ function deleteTree(dir) {
   } catch (e) { /* 忽略 */ }
 }
 
-/** 18. stream-cache 数量上限（超出按修改时间淘汰最旧）。 */
+/** 17. stream-cache 数量上限（超出按修改时间淘汰最旧）。 */
 function streamCacheLimit() {
-  section('18. stream-cache 数量上限（超出按修改时间淘汰最旧）');
+  section('17. stream-cache 数量上限（超出按修改时间淘汰最旧）');
   let tmp = null;
   try {
     check('上限配置键已登记（runtime.cache.max_files）',
@@ -838,7 +825,7 @@ function streamCacheLimit() {
  * 返回同一批前 limit 条。这里直接验证 Page.slice 的切片与 has_more 判据。
  */
 function searchPageSlice() {
-  section('19. 搜索分页切片（skip 生效且 has_more 判据正确）');
+  section('18. 搜索分页切片（skip 生效且 has_more 判据正确）');
   const all = [];
   for (let i = 0; i < 75; i++) all.push('item' + i);
 
@@ -877,9 +864,9 @@ function searchPageSlice() {
   check('null 结果不抛异常', p7.items.length === 0 && !p7.hasMore, '');
 }
 
-/** 20. App 取址链路：合成设备身份、python 风格 query 编码、URL 白名单。 */
+/** 19. App 取址链路：合成设备身份、python 风格 query 编码、URL 白名单。 */
 function appSource() {
-  section('20. App 取址链路：合成身份 / query 编码 / URL 白名单');
+  section('19. App 取址链路：合成身份 / query 编码 / URL 白名单');
 
   check('pyEncode: * 编码为 %2A（resolution=1280*2772）',
     AppSource.pyEncode('1280*2772') === '1280%2A2772',
@@ -1013,9 +1000,9 @@ function findAncestors(boxes, enc, pos, chain) {
   return false;
 }
 
-/** 21. CENC 信令纯 JS 减壳（默认播放路径，不依赖 ffmpeg）。 */
+/** 20. CENC 信令纯 JS 减壳（唯一播放路径，不调用外部程序）。 */
 function cencStrip() {
-  section('21. CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移、mdat 原样）');
+  section('20. CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移、mdat 原样）');
   let tmp = null;
   try {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'hg-strip-'));
@@ -1108,7 +1095,7 @@ function cencStrip() {
     const tailIn = path.join(tmp, 'tail.mp4');
     fs.writeFileSync(tailIn, Mp4Fixture.buildTailMoovEncryptedMp4());
     const tailOut = path.join(tmp, 'tail-out.mp4');
-    check('尾部 moov 形态被拒（回落 ffmpeg）', !Mp4.stripEncryption(tailIn, tailOut), '');
+    check('尾部 moov 形态被拒（不产出成品）', !Mp4.stripEncryption(tailIn, tailOut), '');
 
     const junkIn = path.join(tmp, 'junk.mp4');
     const junk = Buffer.alloc(512);
@@ -1177,7 +1164,6 @@ async function run() {
     device();
     pureSign();
     episodeTitle();
-    transcode();
     keyStore();
     moovLocator();
     streamingDecrypt();
@@ -1200,9 +1186,7 @@ async function run() {
   console.log('  托管模式     ' + Client.MANAGED);
   console.log('  列表免签     ' + Client.SIGN_LIST);
   console.log('  签名方式     本地纯代码签名（PureSign）');
-  console.log('  ffmpeg       ' + Stream.ffmpegAvailable());
-  console.log('  转码         ' + Stream.transcodeEnabled()
-    + (Stream.transcodeEnabled() ? '（编码器 ' + Stream.h264EncoderName() + '）' : ''));
+  console.log('  转码         不转码（源流 H.264 / HEVC 直出）');
   console.log('  Node         ' + process.version);
 
   console.log('');

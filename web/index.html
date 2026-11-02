@@ -85,6 +85,17 @@
     <!-- 固定比例容器：视频加载前后尺寸保持一致，避免弹层高度跳动 -->
     <div class="video-box">
       <video id="video" controls playsinline preload="metadata"></video>
+      <!-- 片源不兼容层：本集只有 ByteVC2（H.266/VVC）时覆盖在播放器上，
+           说明浏览器为何播不了，并直接把本集下载到本地 -->
+      <div id="pUnsupported" class="unsupported" hidden>
+        <p class="u-title">当前剧集不支持浏览器播放</p>
+        <p id="pUnsupportedDesc" class="u-desc"></p>
+        <div class="u-actions">
+          <button id="pDlOneBtn" class="u-btn primary" type="button">下载本集</button>
+          <button id="pDlDismissBtn" class="u-btn" type="button">知道了</button>
+        </div>
+        <p id="pDlHint" class="u-hint" hidden></p>
+      </div>
     </div>
     <div class="player-foot">
       <!-- 左侧一组：集数按钮 + 下载按钮（同一列内并排） -->

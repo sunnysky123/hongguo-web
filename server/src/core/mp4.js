@@ -849,9 +849,17 @@ function verifyVideoIv(bufOrStore, track, keyHex, candidates) {
 /**
  * 视觉样本条目类型（VisualSampleEntry，固定头 78 字节）。
  * encv 为加密视频条目；其余为常见明文视频条目（万一信令已除也认得）。
+ *
+ * vvc1/vvi1 是标准 VVC（H.266）条目；bv2C/bvc2 是字节 ByteVC2 的私有条目
+ * （红果部分新集只有这种片源）：样本条目名取自 sinf/frma 的 bvc2，
+ * 其内部的解码配置盒名为 bv2C，两者大小写不一致是上游自身的不规范，
+ * 这里两个都认。这类片源的解码配置是私有的，标准 VVC 播放器认不出，
+ * 但把加密信令剥干净后，支持 ByteVC2 的播放器仍能打开 ——
+ * 这正是「下载到本地播放」这条路能走通的前提。
  */
 const VISUAL_ENTRY = new Set([
   'encv', 'hvc1', 'hev1', 'avc1', 'av01', 'mp4v', 'vp08', 'vp09', 'dvav', 'dva1',
+  'vvc1', 'vvi1', 'bv2C', 'bvc2',
 ]);
 
 /** 音频样本条目类型（AudioSampleEntry，QuickTime 布局固定头 28 字节）。 */
@@ -867,7 +875,7 @@ function entryFixedHeader(type) {
 }
 
 /**
- * 剥离 CENC 加密信令，产出普通 mp4 —— 纯 JS 实现，不依赖 ffmpeg。
+ * 剥离 CENC 加密信令，产出普通 mp4 —— 纯 JS 实现，不调用任何外部程序。
  *
  * 前提：样本数据（mdat）已是解密后的明文，加密信令全部位于 moov：
  *   - stsd 样本条目（encv/enca）内的 sinf（frma/schm/schi>tenc）；
@@ -877,7 +885,7 @@ function entryFixedHeader(type) {
  * 剥离后 moov 变小，其后所有绝对偏移（stco/co64 的 chunk 偏移）必须统一
  * 左移 delta，因此要求「全部 chunk 偏移都落在 moov 之后」。布局不符时
  * （moov 在尾部、偏移越界、64 位盒、未知条目类型、双 moov 等）返回 false，
- * 由调用方回落 ffmpeg。
+ * 由调用方决定如何交付（本项目会保留未减壳的 raw 文件）。
  *
  * @returns {boolean} true 表示 out 已写好且通过自校验（盒链完整、加密信令除净）
  */
@@ -885,7 +893,7 @@ function stripEncryption(inPath, outPath) {
   try {
     return strip0(inPath, outPath);
   } catch (ignore) {
-    // 任何意外都视为「布局不符」，由调用方回落 ffmpeg
+    // 任何意外都视为「布局不符」，交由调用方处理
     return false;
   }
 }
@@ -933,7 +941,7 @@ function strip0(inPath, outPath) {
     if (!ftypFirst || moovStart < 0 || mdatStart < 0 || mdatStart < moovEnd) {
       return false; // 无 moov、moov 在 mdat 之后（尾部 moov 形态）等
     }
-    // moov 与 mdat 之间只允许 free / skip（ffmpeg 的 faststart 对齐盒）
+    // moov 与 mdat 之间只允许 free / skip（faststart 对齐盒）
     let q = moovEnd;
     while (q < mdatStart) {
       readFullySync(fd, hdr, 0, 8, q);
@@ -972,7 +980,7 @@ function strip0(inPath, outPath) {
     // ---- 3. 剥离加密信令，沿途修补各层盒尺寸 ----
     const removals = [];
     const delta = pruneEncryption(head, moov, removals);
-    if (delta <= 0) return false; // 没有加密信令可剥，交回 ffmpeg 保持原行为
+    if (delta <= 0) return false; // 没有加密信令可剥（布局不符），按不适用处理
 
     // ---- 4. chunk 偏移统一左移 delta（全部条目必须落在 moov 之后）----
     for (const trak of moov.children) {

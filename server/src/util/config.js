@@ -31,7 +31,6 @@ const ENV_OF = {
   // ---- 启动器行为 ----
   'launcher.open_browser': 'HG_OPEN_BROWSER',
   // ---- 运行时调优 ----
-  'runtime.transcode': 'HG_TRANSCODE',
   'runtime.data_dir': 'HONGGUO_DATA_DIR',
   'runtime.device_id': 'HG_DEVICE_ID',
   'runtime.cache.max_files': 'HONGGUO_CACHE_MAX_FILES',

@@ -575,6 +575,70 @@ body {
   outline: none;
 }
 
+/* 片源不兼容提示：覆盖在视频画面上（视频本身会黑屏，留着只作背景）。
+   文案可能较长，用可滚动容器兜住，避免小屏上按钮被挤出可视区。 */
+.unsupported {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 20px 22px;
+  overflow-y: auto;
+  text-align: center;
+  background: rgba(8, 9, 13, .92);
+  backdrop-filter: blur(2px);
+}
+.unsupported[hidden] { display: none; }
+.unsupported .u-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.unsupported .u-desc {
+  margin: 0;
+  max-width: 46em;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--fg-dim);
+}
+.unsupported .u-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+}
+.unsupported .u-btn {
+  padding: 7px 16px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition: .16s;
+}
+.unsupported .u-btn:hover { color: var(--fg); border-color: var(--fg-mute); }
+.unsupported .u-btn.primary {
+  border-color: transparent;
+  background: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+.unsupported .u-btn.primary:hover { filter: brightness(1.08); }
+.unsupported .u-btn:disabled { opacity: .6; cursor: default; filter: none; }
+.unsupported .u-hint {
+  margin: 0;
+  max-width: 52em;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-mute);
+  word-break: break-all;
+}
+
 /* 视频下方的操作行：左=集数按钮，中=播放状态，右=连播开关
    用三列 grid 而非 flex+space-between：左右两个按钮宽度不同
    （「第 12 集 ▾」比「连播 开」宽），space-between 下状态文本

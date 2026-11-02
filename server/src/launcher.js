@@ -268,7 +268,6 @@ function printConfig() {
   console.log('    api.host       : ' + Config.str('api.host', '127.0.0.1'));
   console.log('    api.port       : ' + Config.num('api.port', 8000));
   console.log('    签名方式       : ' + '本地纯代码签名（PureSign，内置）');
-  console.log('    transcode      : ' + Config.bool('runtime.transcode', false));
   // data_dir 只承载视频缓存（落在 server/stream-cache）；设备身份与
   // 密钥（均落在 apikeys.json）固定位于 server/config，不随本项变化。
   console.log('    data_dir(视频缓存) : ' + Config.str('runtime.data_dir', 'server'));
