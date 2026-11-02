@@ -26,6 +26,7 @@ const Log = require('../util/log');
 const Http = require('../util/http');
 const Safeguards = require('../core/safeguards');
 const AppSource = require('../service/app-source');
+const Guard = require('./upstream-guard');
 const { readFullySync } = require('../util/common');
 
 /** 默认保留的缓存文件数上限。 */
@@ -330,12 +331,15 @@ async function prewarmOnce(vid, quality) {
     if (attempt > 0) {
       // 注册失败或播放接口空响应都需要重新注册；空响应只清理对应 ID，
       // 避免并发请求误清除另一请求刚注册成功的新身份。
-      if (last !== null && (last.code === 'DEVICE_REGISTRATION_FAILED'
-          || last.code === 'PLAYBACK_EMPTY_RESPONSE')) {
+      if (last !== null && last.code === 'DEVICE_REGISTRATION_FAILED') {
         await AppSource.resetPlaybackDevice(last.deviceId);
-        if (last.code === 'PLAYBACK_EMPTY_RESPONSE') {
-          Log.warn('播放接口返回空响应，重新注册匿名播放设备后重试');
-        }
+      } else if (last !== null && last.code === 'PLAYBACK_EMPTY_RESPONSE'
+          && Guard.shouldRotateDevice(last.deviceId)) {
+        // 空响应时换设备身份对当前这轮限流无效（2026-11-02 实测：换新身份
+        // 照样空），而每次失败都重新注册会连着打注册接口、更像异常客户端。
+        // 因此同一身份 60 秒内只换一次。
+        await AppSource.resetPlaybackDevice(last.deviceId);
+        Guard.warn('播放接口返回空响应，重新注册匿名播放设备后重试');
       }
       // 重试前稍作等待，给瞬时故障一个恢复窗口
       await Safeguards.sleep(PREWARM_RETRY_DELAY_MS);
@@ -347,8 +351,16 @@ async function prewarmOnce(vid, quality) {
       // 「只有 BVC2」是确定性结果：上游这一集根本没有 H.264/HEVC 版本，
       // 重试得到的还是同样结论，直接抛出，省掉两次无意义的下载尝试。
       if (e !== null && e !== undefined && e.code === AppSource.ERR_BVC2_ONLY) throw e;
-      Log.warn('预热失败 ' + vid + '（第 ' + (attempt + 1) + '/'
-        + (PREWARM_MAX_RETRIES + 1) + ' 次尝试）：' + errMsg(e));
+      // 熔断中：再重试也只会立刻失败，多两条同样的日志，直接放弃这一集。
+      if (e !== null && e !== undefined && e.code === 'PLAYBACK_CIRCUIT_OPEN') {
+        Guard.warn('预热跳过 ' + vid + '：' + errMsg(e));
+        throw e;
+      }
+      const msg = '预热失败 ' + vid + '（第 ' + (attempt + 1) + '/'
+        + (PREWARM_MAX_RETRIES + 1) + ' 次尝试）：' + errMsg(e);
+      // 空响应是当前上游的成片故障：整剧预热会连刷几十条同样的告警，走节流
+      if (isUpstreamShed(e)) Guard.warn(msg);
+      else Log.warn(msg);
     }
   }
   throw last;
@@ -358,6 +370,15 @@ async function prewarmOnce(vid, quality) {
 function errMsg(e) {
   if (e === null || e === undefined) return 'null';
   return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);
+}
+
+/**
+ * 是否属于「上游整体拒流」类错误：接口连续返回空响应，或已处于熔断冷却中。
+ * 这类失败对每一集都成立，逐集告警只会刷屏，统一交给 Guard 节流。
+ */
+function isUpstreamShed(e) {
+  return e !== null && e !== undefined
+    && (e.code === 'PLAYBACK_EMPTY_RESPONSE' || e.code === 'PLAYBACK_CIRCUIT_OPEN');
 }
 
 /**
@@ -383,8 +404,11 @@ function runPrewarm(vid, quality) {
         Log.info('跳过预热 ' + vid + '：本集仅 BVC2 片源，浏览器不可播（可下载后本地观看）');
         return;
       }
-      Log.warn('预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e));
+      const finalMsg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
+        + ' 次仍不成功，' + errMsg(e);
+      // 整剧预热会为每一集打一条同样的失败：上游成片故障走节流，其他照常
+      if (isUpstreamShed(e)) Guard.warn(finalMsg);
+      else Log.warn(finalMsg);
     })
     .finally(() => {
       prewarmActive--;
@@ -403,8 +427,11 @@ async function prewarm(vid, quality) {
     try {
       await prewarmOnce(vid, quality);
     } catch (e) {
-      Log.warn('预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e));
+      const finalMsg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
+        + ' 次仍不成功，' + errMsg(e);
+      // 整剧预热会为每一集打一条同样的失败：上游成片故障走节流，其他照常
+      if (isUpstreamShed(e)) Guard.warn(finalMsg);
+      else Log.warn(finalMsg);
       return 'failed';
     }
     return 'warming';

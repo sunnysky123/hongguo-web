@@ -358,13 +358,16 @@ function hashF13(querySm3, bodyMd5, tsBytes, khronos) {
   const di = new Array((data.length / 4) + 112 + 16).fill(0);
   let diLen = 0;
   for (let i = 0; i + 3 < data.length; i += 4) di[diLen++] = readBe32(data, i);
-  const di0 = di[0];
+  // di0 每轮前进一格：参考实现里它是「上一轮的 di[i+1]」，等价于本轮取 di[i]。
+  // 写成常量 di[0] 会让第 1 轮之后的每一项都算错（branch 0 的 queryBodyTs 全错）。
+  let di0 = di[0];
   for (let i = 0; i < 112; i++) {
     const di1 = di[i + 1];
     const di14 = di[i + 14];
     const r1 = rotl(di1, 14) ^ rotl(di1, 25) ^ (di1 >>> 3);
     const r2 = rotl(di14, 13) ^ rotl(di14, 15) ^ (di14 >>> 10);
     di[diLen++] = (di0 + di[i + 9] + r1 + r2) | 0;
+    di0 = di1;
   }
 
   const initRaw = [0x7aba4fc8, 0x67166507, 0x6403fa00, 0x340f512f,
@@ -694,9 +697,15 @@ function rndInt(n) {
   return crypto.randomInt(n);
 }
 
-/** 返回有符号 32 位随机整数。 */
+/**
+ * 返回无符号 32 位随机整数（0 ~ 2^32-1）。
+ *
+ * 参考实现的随机源是 `Math.floor(Math.random() * 0x100000000)`，恒为非负；
+ * 这里同样取无符号，避免下游对符号做隐式假设（medusa 的 `random >> 16`、
+ * `le32(random)` 都基于「非负 32 位整数」这一前提）。
+ */
 function rndInt32() {
-  return crypto.randomBytes(4).readInt32BE(0);
+  return crypto.randomBytes(4).readUInt32BE(0);
 }
 
 /**
@@ -892,4 +901,15 @@ function paramOf(query, key, fallback) {
   return fallback;
 }
 
-module.exports = { sign, branchOf };
+/**
+ * 仅供自检：用 query/body 明文跑一次 hashF13，返回十六进制。
+ *
+ * hashF13 有三个分支（0/1/2），分支 0 的展开循环里有一处「上一轮值」的
+ * 状态推进，最容易被改错；给三个分支各留一组固定向量，退化时自检立刻报错。
+ */
+function hashF13Hex(queryText, bodyText, khronos) {
+  return hashF13(sm3(Buffer.from(queryText)), md5(Buffer.from(bodyText)),
+    le32(khronos), khronos).toString('hex');
+}
+
+module.exports = { sign, branchOf, hashF13Hex };
