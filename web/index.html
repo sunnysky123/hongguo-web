@@ -69,9 +69,9 @@
           <!-- 简介按钮：hover/focus 时在下方浮出简介，避免常驻占位导致抖动 -->
           <button id="pInfoBtn" class="info-btn" aria-describedby="pInfoPop"
                   title="查看简介" hidden>简介</button>
-          <!-- 关联剧集按钮：位于简介与收藏之间，点击用当前剧名搜索其他季/版本 -->
+          <!-- 关联剧集按钮：位于简介与收藏之间，点击弹窗查找其他季 -->
           <button id="pRelBtn" class="info-btn"
-                  title="用当前剧名搜索，查找其他季或版本" hidden>关联剧集</button>
+                  title="查找该剧的其他季" hidden>关联剧集</button>
           <!-- 收藏按钮：与简介/关联剧集按钮同排，点击切换收藏状态 -->
           <button id="pFavBtn" class="info-btn fav-btn" title="收藏这部短剧" hidden>★ 收藏</button>
         </div>
@@ -149,6 +149,14 @@
       </div>
       <p class="muted dl-note">任务在服务端后台执行，发起后可点击主页右上角『⤓』按钮查看进度。</p>
     </div>
+      <!-- 关联剧集（其他季）卡片：点击「关联剧集」按钮展开，列表展示可切换的其他季 -->
+      <div id="seasonCard" class="season-card" hidden>
+        <div class="ep-card-head">
+          <span>其他季</span>
+          <button id="seasonClose" class="ep-card-x" title="关闭">✕</button>
+        </div>
+        <div id="seasonList" class="season-list"></div>
+      </div>
   </div>
 </div>
 

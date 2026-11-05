@@ -1254,6 +1254,63 @@ function shareLink() {
     ShareLink.decodeHtml('&amp;quot;') === '&quot;', ShareLink.decodeHtml('&amp;quot;'));
 }
 
+// ==================== 季数解析工具 ====================
+
+function seasonUtil() {
+  section('util/season');
+  const Season = require('./util/season');
+
+  check('无季数剧名',
+    Season.parseSeason('某某短剧').season === 1
+    && Season.parseSeason('某某短剧').explicit === false,
+    JSON.stringify(Season.parseSeason('某某短剧')));
+
+  check('第N季格式',
+    Season.parseSeason('冷宫开席第四季').season === 4
+    && Season.parseSeason('冷宫开席第四季').explicit === true,
+    JSON.stringify(Season.parseSeason('冷宫开席第四季')));
+
+  check('第N部格式',
+    Season.parseSeason('某某故事第二部').season === 2,
+    JSON.stringify(Season.parseSeason('某某故事第二部')));
+
+  check('（N）格式',
+    Season.parseSeason('某某短剧（3）').season === 3
+    && Season.parseSeason('某某短剧(3)').season === 3,
+    JSON.stringify(Season.parseSeason('某某短剧(3)')));
+
+  check('括号年份不误判（>99）',
+    Season.parseSeason('某某短剧（2025）').season === 1
+    && Season.parseSeason('某某短剧（2025）').explicit === false,
+    JSON.stringify(Season.parseSeason('某某短剧（2025）')));
+
+  check('Season N 格式',
+    Season.parseSeason('My Show Season 2').season === 2
+    && Season.parseSeason('My Show Season 2').explicit === true
+    && Season.parseSeason('My Show Season 2').base === 'My Show',
+    JSON.stringify(Season.parseSeason('My Show Season 2')));
+
+  check('中文数字「两」',
+    Season.parseSeason('某某剧第二部').season === 2
+    && Season.parseSeason('某某剧第两部').season === 2,
+    JSON.stringify(Season.parseSeason('某某剧第两部')));
+
+  check('normalizeTitle 去标点全角',
+    Season.normalizeTitle('冷宫开席：陛下（第四季）') === Season.normalizeTitle('冷宫开席陛下第四季'),
+    Season.normalizeTitle('冷宫开席：陛下（第四季）'));
+
+  check('titleScore 同名 = 100',
+    Season.titleScore('冷宫开席', '冷宫开席') === 100, '');
+
+  check('titleScore 含季名 > 50',
+    Season.titleScore('冷宫开席', '冷宫开席第四季') > 50,
+    String(Season.titleScore('冷宫开席', '冷宫开席第四季')));
+
+  check('titleScore 无关剧 = 0',
+    Season.titleScore('冷宫开席', '完全无关剧名') === 0,
+    String(Season.titleScore('冷宫开席', '完全无关剧名')));
+}
+
 // ==================== 入口 ====================
 
 async function run() {
@@ -1284,6 +1341,7 @@ async function run() {
     appSource();
     cencStrip();
     shareLink();
+    seasonUtil();
   } catch (e) {
     failed++;
     console.log('  ✗ 自检异常中断：' + e);

@@ -926,7 +926,8 @@
       $('pTitle').textContent = ctx.title;
       buildEpGrid(eps);
       closeEpCard();
-      closeDlModal(); // 换剧：关掉上一部残留的范围卡片
+      closeDlModal();
+      closeSeasonCard(); // 换剧：关掉上一部残留的其他季卡片（函数声明已提升，可在此直接调用）
       playerEl.hidden = false;
       // 简介交给悬浮气泡；集数按钮只显示当前集数（每集刷新，不再消失）
       setAbstract(meta.abstract || '');
@@ -1460,6 +1461,7 @@
 
     function openEpCard() {
       if (epBtn.hidden || !ctx.episodes.length) return;
+      closeAllAttachedCards(epCard); // 互斥：开本卡前关掉下载/其他季卡片
       epCard.hidden = false;
       placeEpCard();
     }
@@ -1469,8 +1471,7 @@
     epBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (epCard.hidden) {
-        closeDlModal(); // 两张贴附卡片互斥，避免叠在按钮上方
-        openEpCard();
+        openEpCard(); // openEpCard 内部统一做卡片互斥
       } else {
         epCard.hidden = true;
       }
@@ -1569,6 +1570,7 @@
       + ctx.title + ' 文件夹，文件名为「第N集.mp4」；每集最多重试 3 次。';
     $('dlGo').disabled = false;
     $('dlGo').textContent = '开始下载';
+    closeAllAttachedCards(dlModal); // 互斥：开本卡前关掉选集/其他季卡片
     dlModal.hidden = false;
     placeDlCard();
   }
@@ -1801,8 +1803,7 @@
     // 与集数按钮一致：卡片开着时再点一次收起（stopPropagation 挡掉了
     // document 的外部关闭监听，这里必须自己处理 toggle）
     if (dlModal.hidden) {
-      closeEpCard(); // 两张贴附卡片互斥，避免叠在按钮上方
-      openDlModal();
+      openDlModal(); // openDlModal 内部统一做卡片互斥
     } else {
       closeDlModal();
     }
@@ -1871,7 +1872,7 @@
     toast(on ? '已加入收藏' : '已取消收藏', 1600);
   });
 
-  /* ---------- 关联剧集按钮（播放器内） ---------- */
+  /* ---------- 关联剧集按钮（播放器内）：弹窗查找其他季 ---------- */
   /**
    * 可搜索的剧名。空标题、或 openPlayer 的占位标题「播放」时返回空串 ——
    * 拿「播放」去搜索只会得到一堆无关结果，等于按钮坏掉了。
@@ -1886,21 +1887,113 @@
     $('pRelBtn').hidden = !searchNameOf();
   }
 
+  const seasonCard = $('seasonCard');
+  let seasonReqId = 0;
+
+  function closeSeasonCard() { seasonCard.hidden = true; }
+
   /**
-   * 点击「关联剧集」：把当前剧名填进搜索框并执行搜索，用于查找该剧的
-   * 其他季或版本（换季常改名或拆成多部，搜剧名能把它们并排列出来）。
-   *
-   * 先关播放器再搜索：播放器是遮罩弹层，压在结果列表之上。关闭复用
-   * pClose 的完整清理（停播、复位全屏、清空选集），不另写一套。
+   * 关闭其他已打开的贴附卡片（选集 / 下载 / 其他季三张互斥）。
+   * 直接置 hidden，不重读各家状态，避免跨块引用尚未初始化的 close 函数。
+   * @param {HTMLElement} except 保留的卡片；传 null 则全部关闭。
    */
-  $('pRelBtn').addEventListener('click', () => {
-    const q = searchNameOf();
-    if (!q) { toast('当前没有可搜索的剧名'); return; }
-    $('pClose').click();
-    searchEl.value = q; // 回填搜索框：搜了什么一目了然，也能接着改词重搜
-    window.scrollTo({ top: 0 }); // 搜索框在顶栏，滚回去让用户看见
-    doSearch(q);
+  function closeAllAttachedCards(except) {
+    const epCard = $('pEpCard');
+    const dlCard = $('dlModal');
+    if (epCard !== except) epCard.hidden = true;
+    if (dlCard !== except) dlCard.hidden = true;
+    if (seasonCard !== except) seasonCard.hidden = true;
+  }
+
+  function placeSeasonCard() {
+    if (seasonCard.hidden) return;
+    const b = $('pRelBtn').getBoundingClientRect();
+    const gap = 8;
+    const w = seasonCard.offsetWidth;
+    const h = seasonCard.offsetHeight;
+    // 水平：左缘对齐按钮左缘（与选集/下载卡片一致，避免伸出播放器左边框）；
+    // 右侧超出视口才左移夹紧
+    let left = b.left;
+    if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+    if (left < 8) left = 8;
+    // 垂直：按钮在标题行（顶部），默认向下展开；下方放不下才向上
+    let top = b.bottom + gap;
+    if (top + h > window.innerHeight - 8) top = b.top - h - gap;
+    if (top < 8) top = 8;
+    seasonCard.style.left = Math.round(left) + 'px';
+    seasonCard.style.top = Math.round(top) + 'px';
+  }
+
+  function toggleSeasonCard() {
+    if (seasonCard.hidden) {
+      seasonCard.hidden = false;
+      placeSeasonCard();
+      loadSeasons();
+    } else {
+      closeSeasonCard();
+    }
+  }
+
+  async function loadSeasons() {
+    const sid = ctx.seriesId;
+    const title = searchNameOf();
+    if (!sid || !title) return;
+    closeAllAttachedCards(seasonCard); // 互斥：查找/刷新前关掉其他贴附卡片
+    const body = $('seasonList');
+    const myReq = ++seasonReqId;
+    body.innerHTML = '<p class="muted season-loading">正在查找其他季…</p>';
+    placeSeasonCard();
+    try {
+      const data = await api(
+        `/seasons?series_id=${encodeURIComponent(sid)}&title=${encodeURIComponent(title)}`
+      );
+      if (myReq !== seasonReqId) return; // 期间换了剧，丢弃过期结果
+      const seasons = (data && data.seasons) || [];
+      if (!seasons.length) {
+        body.innerHTML = '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
+      } else {
+        body.innerHTML = seasons.map((s) => {
+          const img = s.cover ? coverUrl(s.cover) : '';
+          const poster = img
+            ? `<div class="poster"><img loading="lazy" src="${esc(img)}" alt=""
+                 onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'无封面'}))"></div>`
+            : '<div class="poster"><div class="ph">无封面</div></div>';
+          const label = s.season && s.season !== 1 ? `第 ${s.season} 季` : '第一季';
+          const epNote = s.episode_cnt ? `共 ${s.episode_cnt} 集` : '';
+          return `<button class="season-item" data-sid="${esc(s.series_id)}" data-title="${esc(s.title)}"
+            aria-label="播放《${esc(s.title)}》">
+            ${poster}
+            <div class="season-meta">
+              <h4>${esc(s.title || '未命名')}</h4>
+              <p class="muted">${label}${epNote ? ' · ' + epNote : ''}</p>
+            </div>
+            <span class="season-play">▶</span>
+          </button>`;
+        }).join('');
+        body.querySelectorAll('.season-item').forEach((b) => {
+          b.addEventListener('click', () => {
+            closeSeasonCard();
+            openSeries(b.dataset.sid, b.dataset.title);
+          });
+        });
+      }
+    } catch (e) {
+      if (myReq === seasonReqId) {
+        body.innerHTML = `<p class="muted season-err">查找失败：${esc(e.message || '未知错误')}，可稍后重试。</p>`;
+      }
+    }
+  }
+
+  $('pRelBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleSeasonCard(); });
+  $('seasonClose').addEventListener('click', (e) => { e.stopPropagation(); closeSeasonCard(); });
+  document.addEventListener('click', (e) => {
+    if (!seasonCard.hidden
+      && !seasonCard.contains(e.target) && !$('pRelBtn').contains(e.target)) closeSeasonCard();
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSeasonCard();
+  });
+  window.addEventListener('resize', () => { if (!seasonCard.hidden) placeSeasonCard(); });
 
   /* ---------- 历史 / 收藏 列表 ---------- */
   const libModal = $('libModal');

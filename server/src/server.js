@@ -271,7 +271,8 @@ class Server {
         '/latest?genre=short_play|comic_series|ai_series&only_today=true',
         '/filters?genre=short_play',
         '/browse?genre=ai_series&theme=玄幻&sort=hot_score&days=7',
-        '/episodes?series_id=', '/play?series_id=&ep=1-10',
+        '/episodes?series_id=', '/seasons?series_id=[&title=]',
+        '/play?series_id=&ep=1-10',
         '/stream?series_id=&ep=1', '/stream?vid=&quality=1080p',
         '/prewarm?vid=', '/stats',
         '/share/resolve?text=（红果分享文案/链接，POST {text} 亦可）',
@@ -490,6 +491,24 @@ class Server {
         return;
       }
       Res.json(req, res, 200, await Client.getEpisodes(sid));
+      return;
+    }
+
+    if (method === 'GET' && pathname === '/seasons') {
+      const sid = q.series_id;
+      if (sid === undefined || sid === null || sid === '') {
+        Res.fail(req, res, 400, '缺少 series_id');
+        return;
+      }
+      // title 可选：传了则直接用它解析基础名；未传则自动从 /episodes 拉取剧名
+      let title = q.title !== undefined && q.title !== null && q.title !== '' ? String(q.title) : '';
+      if (title === '') {
+        try {
+          const detail = await Client.getEpisodes(sid);
+          title = Json.optStr(detail === null || detail === undefined ? '' : (detail.meta && detail.meta.title), '');
+        } catch (e) { /* 无法获取剧名时传空，findOtherSeasons 内部会返回空 seasons */ }
+      }
+      Res.json(req, res, 200, await Client.findOtherSeasons(sid, title));
       return;
     }
 

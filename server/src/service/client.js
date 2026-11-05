@@ -25,6 +25,7 @@ const Device = require('../core/device');
 const Safeguards = require('../core/safeguards');
 const PureSign = require('../core/pure-sign');
 const WebSource = require('../service/web-source');
+const SeasonUtil = require('../util/season');
 
 // ==================== 配置装载 ====================
 //
@@ -1336,6 +1337,102 @@ function sanitize(name) {
   return t.length > 60 ? t.substring(0, 60) : t;
 }
 
+/**
+ * 查找同一剧的其他季。
+ *
+ * 原理：把当前剧名解析为「基础名 + 季数」，再用「基础名」做模糊搜索，
+ * 把搜到的所有条目按季数归组，排除当前 series_id，返回其他季列表。
+ *
+ * 搜索关键词策略：
+ *  - 优先取「基础名」（去掉季数修饰词），一次搜索覆盖所有季；
+ *  - 若搜不到结果，补搜完整剧名再试一次。
+ *
+ * 返回结构：
+ *   {
+ *     series_id,      当前剧 id
+ *     series_title,   当前剧名
+ *     base_title,     解析出的基础名（如「xxx」，去掉「第X季」）
+ *     season,         当前季数（默认 1）
+ *     seasons: [      其他季列表
+ *       { series_id, title, cover, episode_cnt, season, score }
+ *     ]
+ *   }
+ *
+ * @param {string} seriesId 当前剧 id
+ * @param {string} seriesTitle 当前剧名（用于解析基础名）
+ * @returns {Promise<object>}
+ */
+async function findOtherSeasons(seriesId, seriesTitle) {
+  const sid = String(seriesId === null || seriesId === undefined ? '' : seriesId).trim();
+  const stitle = String(seriesTitle === null || seriesTitle === undefined ? '' : seriesTitle).trim();
+  if (sid === '' || stitle === '') return { series_id: sid, series_title: stitle, base_title: stitle, season: 1, seasons: [] };
+
+  const { parseSeason, normalizeTitle, titleScore } = SeasonUtil;
+
+  const cur = parseSeason(stitle);
+  const baseTitle = cur.base;
+  const curSeason = cur.season;
+  const searchKw = baseTitle;
+
+  const out = Json.obj();
+  out.series_id = sid;
+  out.series_title = stitle;
+  out.base_title = baseTitle;
+  out.season = curSeason;
+
+  // 用基础名搜索（一次覆盖所有季）
+  let results = [];
+  try {
+    results = await search(searchKw, 20);
+  } catch (e) {
+    Log.warn('findOtherSeasons App 搜索失败 (' + searchKw + '): ' + e.message);
+  }
+
+  // 补搜：基础名无结果时，用完整剧名再试
+  if (results.length === 0 && baseTitle !== stitle) {
+    try {
+      results = await search(stitle, 20);
+    } catch (e) {
+      Log.warn('findOtherSeasons 补搜失败 (' + stitle + '): ' + e.message);
+    }
+  }
+
+  // 过滤当前剧本身，解析每条的季数，只保留同基础名但不同季的候选
+  const seasons = [];
+  const seen = new Set([sid]);
+
+  for (const raw of results) {
+    const item = Json.optObj(raw);
+    if (item === null) continue;
+    const rid = Json.optStr(item.series_id, '');
+    const rtitle = Json.optStr(item.title, '');
+    if (rid === '' || rtitle === '') continue;
+    if (rid === sid || seen.has(rid)) continue;
+    seen.add(rid);
+
+    const rParsed = parseSeason(rtitle);
+    // 只保留与当前剧同基础名的条目（相似度兜底）
+    const similarity = titleScore(baseTitle, rtitle);
+    if (similarity < 30) continue;
+    // 同季同基础名 = 当前剧本身，跳过
+    if (rParsed.season === curSeason && normalizeTitle(rParsed.base) === normalizeTitle(baseTitle)) continue;
+
+    const entry = Json.obj();
+    entry.series_id = rid;
+    entry.title = rtitle;
+    entry.cover = Json.optStr(item.cover, '');
+    entry.episode_cnt = Json.optInt(item.episode_cnt, 0);
+    entry.season = rParsed.season;
+    entry.score = similarity;
+    seasons.push(entry);
+  }
+
+  // 按季数升序，同季数按相似度降序
+  seasons.sort((a, b) => a.season - b.season || b.score - a.score);
+  out.seasons = seasons.slice(0, 20);
+  return out;
+}
+
 module.exports = {
   HOST,
   MANAGED,
@@ -1368,6 +1465,7 @@ module.exports = {
   searchPage,
   getEpisodes,
   getEpisodesBatch,
+  findOtherSeasons,
   rank,
   rankPage,
   latest,
