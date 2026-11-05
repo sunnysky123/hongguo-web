@@ -650,6 +650,38 @@ class Server {
       }
     }
 
+            // POST /download/task/retry  重试任务里失败的剧集：{id, indexes?}
+            //   indexes 省略 = 全部失败集；否则只重试给定的集号（必须都在失败列表里）。
+            // 在原任务上继续跑（id 不变），前端进度卡片无需换行；每集最多手动重试
+            // Download.MAX_RETRIES 次，防止无限重试。
+            if (pathname === '/download/task/retry') {
+              if (method !== 'POST') {
+                Res.fail(req, res, 405, '请用 POST');
+                return;
+              }
+              const payload = await readJson(req);
+              const id = payload.id !== undefined && payload.id !== null
+                ? String(payload.id).trim() : '';
+              if (id === '') {
+                Res.fail(req, res, 400, '缺少 id');
+                return;
+              }
+              let indexes = null;
+              if (Array.isArray(payload.indexes)) indexes = payload.indexes;
+              let t;
+              try {
+                t = await Download.retry(id, indexes);
+              } catch (e) {
+                Res.fail(req, res, 400, String(e && e.message !== undefined ? e.message : e));
+                return;
+              }
+              const m = Json.obj();
+              m.ok = true;
+              m.task = Download.snapshot(t);
+              Res.json(req, res, 200, m);
+              return;
+            }
+
     if (method === 'GET' && pathname === '/stats') {
       if (!this.checkAdmin(req, q)) {
         Res.fail(req, res, 401, '需要 admin_token');

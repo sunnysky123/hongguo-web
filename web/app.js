@@ -1219,6 +1219,7 @@
         t = {
           id: s.id, series_id: s.series_id, title: s.title,
           total: s.total, done: s.done, failed: s.failed || [],
+                  max_retries: s.max_retries,
           status: s.status, dir: s.dir, error: null,
         };
         dlTasks.unshift(t);
@@ -1600,6 +1601,7 @@
       dlTasks.unshift({
         id: s.id, series_id: s.series_id, title: s.title,
         total: s.total, done: s.done, failed: s.failed || [],
+              max_retries: s.max_retries,
         status: s.status, dir: s.dir, error: null,
       });
       syncDlEntryBtn();
@@ -1639,6 +1641,7 @@
           t.done = s.done;
           t.total = s.total;
           t.failed = s.failed || [];
+                    t.max_retries = s.max_retries;
           t.status = s.status;
           t.dir = s.dir;
           if (wasRunning && s.status !== 'running') onDlTaskDone(t);
@@ -1672,6 +1675,67 @@
     if (!dlProgModal.hidden) renderDlProg();
   }
 
+  /**
+   * 任务行的「失败重试」按钮：仅当任务已结束且存在失败剧集时返回元素，
+   * 否则返回 null（调用方不插入任何节点）。
+   */
+  function dlRetryBtn(t) {
+    if (t.status === 'running' || t.status === 'gone') return null;
+    const failed = t.failed || [];
+    if (failed.length === 0) return null;
+    const btn = document.createElement('button');
+    btn.className = 'dl-task-retry';
+    // 已达上限的集不再重试：服务端按集计手动重试次数，避免无限重试
+    const max = Number(t.max_retries) || 0;
+    const again = max > 0
+      ? failed.filter((f) => (Number(f.retries) || 0) < max) : failed;
+    if (again.length === 0) {
+      btn.disabled = true;
+      btn.textContent = '失败重试';
+      btn.title = '失败剧集已达重试上限（每集最多 ' + max + ' 次）';
+      return btn;
+    }
+    btn.textContent = '失败重试';
+    btn.title = '重新下载失败的第 ' + again.map((f) => f.index).join('、') + ' 集';
+    btn.addEventListener('click', () => retryDlTask(t, btn));
+    return btn;
+  }
+
+  /** 点「失败重试」：原任务上继续跑失败集，然后重新轮询。 */
+  async function retryDlTask(t, btn) {
+    if (t.__retrying) return;
+    t.__retrying = true;
+    btn.disabled = true;
+    const old = btn.textContent;
+    btn.textContent = '提交中…';
+    try {
+      const j = await api('/download/task/retry', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // 不带 indexes：交给服务端重试全部失败集（已达上限的由服务端跳过）
+        body: JSON.stringify({ id: t.id }),
+      });
+      const s = j.task;
+      t.done = s.done;
+      t.total = s.total;
+      t.failed = s.failed || [];
+      t.max_retries = s.max_retries;
+      t.status = s.status;
+      t.dir = s.dir;
+      t.error = s.error;
+      syncDlEntryBtn();
+      pollDlTasks();
+      renderDlProg();
+      toast('已开始重试失败剧集：' + t.title);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = old;
+      toast('重试失败：' + e.message);
+    } finally {
+      t.__retrying = false;
+    }
+  }
+
   /** 渲染进度卡片：每个任务一行（标题 + 状态 + 进度条 + 明细）。 */
   function renderDlProg() {
     const box = $('dlProgList');
@@ -1700,8 +1764,13 @@
         : t.status === 'failed' ? '已失败' : '已失效';
       if (t.status === 'done') state.classList.add('ok');
       if (t.status === 'failed' || t.status === 'gone') state.classList.add('err');
+            const ops = document.createElement('div');
+            ops.className = 'dl-task-ops';
+            const retry = dlRetryBtn(t);
+            if (retry !== null) ops.appendChild(retry);
+            ops.appendChild(state);
       head.appendChild(title);
-      head.appendChild(state);
+            head.appendChild(ops);
 
       const bar = document.createElement('div');
       bar.className = 'dl-bar';
