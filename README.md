@@ -360,6 +360,8 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/api-key` | 自动签发本地密钥（免鉴权） |
 | GET | `/search?q=&page=` | 搜索（本地签名，自动走官网/App 双通道） |
 | GET | `/search/page?q=&page=` | 同上，分页别名 |
+| GET | `/share/resolve?text=` | **红果 App 分享文案/链接解析**（返回对应剧集 `series_id` 与分享所在集号） |
+| POST | `/share/resolve` | 同上，body `{ "text": "<整段分享文案>" }`（也接受 `url` / `link`） |
 | GET | `/rank?board=recommend\|hot\|new&limit=` | 榜单 |
 | GET | `/latest?genre=short_play\|comic_series\|ai_series&only_today=true` | 最新 |
 | GET | `/filters?genre=short_play` | 筛选维度 |
@@ -414,6 +416,47 @@ curl -H "x-api-key: <key>" \
 
 `quality` 可取 `360p` / `480p` / `540p` / `720p` / `1080p` 或 `best`（默认，取最大体积）。
 支持 `Range` 请求（返回 `206 Partial Content`），播放器可拖动进度。
+
+### 分享链接解析
+
+把手机「红果短剧 App」里复制出来的**整段分享文案**直接丢给接口即可，不需要
+自己先把链接抠出来（文案里的《剧名》会作为兜底提示）：
+
+```bash
+curl -X POST -H "x-api-key: <key>" -H "Content-Type: application/json" \
+  -d '{"text":"漫剧《冷宫开席：陛下又来蹭饭了第四季》 - 免费好剧，尽在红果 点击链接打开👉https://novelquickapp.com/s/5em_xJT-hmg/ 复制本条消息后，打开「红果短剧App」后免费看全集~"}' \
+  "http://127.0.0.1:8000/share/resolve"
+
+# 也可以 GET：/share/resolve?text=<URL 编码后的文案或链接>
+```
+
+响应（节选）：
+
+```json
+{
+  "ok": true,
+  "share_url": "https://novelquickapp.com/s/5em_xJT-hmg/",
+  "landing_url": "https://novelquickapp.com/hongguo/ug/pages/video-animation-share?video_id=7704293880799185982&vid=...",
+  "series_id": "7704293880799185982",
+  "title": "冷宫开席：陛下又来蹭饭了第四季",
+  "episode_cnt": 109,
+  "episode": { "index": 94, "vid": "7704295599830486041", "total": 109 },
+  "matched_by": "video_id",
+  "verified": true,
+  "candidates": [],
+  "episodes_url": "/episodes?series_id=7704293880799185982"
+}
+```
+
+解析链路：域名白名单 → 逐跳展开 302 短链 → 取落地页 `video_id`
+（漫剧分享里就是 `series_id`）/ `vid` → 读落地页 SSR 数据里的剧名、封面、
+简介、分集表 → 调 `/episodes` 校验 id 与剧名一致 → 用 `vid` 定位分享所在集号。
+拿不到 id 或 id 与剧名不符时，自动退回按剧名搜索；`matched_by` 说明最终命中方式，
+`verified=false` 表示上游校验失败、仅凭链接里的 id 返回。服务端只对分享域名
+（如 `novelquickapp.com` / `hongguoduanju.com`）发起请求，结果按短链缓存 10 分钟。
+
+失败时返回 `{ "detail": "..." }`：文案里没有链接或域名不支持为 `400`，
+未匹配到剧集为 `404`，分享页打不开为 `502`。
 
 ---
 

@@ -6,7 +6,7 @@
  *
  * 路由：/ /health /api-key /search /rank /latest /filters
  *       /browse /episodes /play /stream /video_url /img
- *       /download/task /prewarm /stats /metrics/batch /admin/keys
+ *       /share/resolve /download/task /prewarm /stats /metrics/batch /admin/keys
  */
 
 const http = require('http');
@@ -15,6 +15,7 @@ const path = require('path');
 const KeyStore = require('./core/keystore');
 const Safeguards = require('./core/safeguards');
 const Client = require('./service/client');
+const ShareLink = require('./service/share-link');
 const Download = require('./service/download');
 const Res = require('./service/res');
 const Stream = require('./service/stream');
@@ -273,6 +274,7 @@ class Server {
         '/episodes?series_id=', '/play?series_id=&ep=1-10',
         '/stream?series_id=&ep=1', '/stream?vid=&quality=1080p',
         '/prewarm?vid=', '/stats',
+        '/share/resolve?text=（红果分享文案/链接，POST {text} 亦可）',
         '/download/task（POST {series_id,start,end} 批量下载剧集）',
       ];
       Res.json(req, res, 200, m);
@@ -300,6 +302,33 @@ class Server {
       m.note = k.note;
       m.rate_per_min = this.ratePerMin;
       Res.json(req, res, 200, m);
+      return;
+    }
+
+    // ---- 分享链接解析（粘贴整段文案也行，服务内部自己抠 URL） ----
+    if (pathname === '/share/resolve' && (method === 'GET' || method === 'POST')) {
+      let raw = '';
+      if (method === 'POST') {
+        const payload = await readJson(req);
+        raw = firstText(payload.text, payload.url, payload.link);
+      } else {
+        raw = firstText(q.text, q.url, q.link, q.q);
+      }
+      if (raw === '') {
+        Res.fail(req, res, 400, '缺少 text（红果分享文案或链接）');
+        return;
+      }
+      let result;
+      try {
+        result = await ShareLink.resolve(raw);
+      } catch (e) {
+        if (e instanceof ShareLink.ShareLinkError) {
+          Res.fail(req, res, e.status, e.message);
+          return;
+        }
+        throw e;   // 上游异常交给 handle 统一转 502
+      }
+      Res.json(req, res, 200, result);
       return;
     }
 
@@ -948,6 +977,14 @@ function header(req, name) {
   if (v === undefined || v === null) return null;
   if (Array.isArray(v)) return v.length > 0 ? v[0] : null;
   return String(v);
+}
+
+/** 取第一个非空字符串（分享文案兼容 text / url / link / q 等参数名）。 */
+function firstText(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
 }
 
 /** 把请求体/参数里的集号转成整数；缺失或非法返回 null（调用方按「不限制」处理）。 */

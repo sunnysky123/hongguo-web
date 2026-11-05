@@ -420,8 +420,9 @@ body {
   flex: none;
 }
 
-/* 网页全屏按钮：仅图标，hover 时加深描边 */
-.icon-btn .ic-full {
+/* 网页全屏 / 分享解析按钮：仅图标，hover 时加深描边 */
+.icon-btn .ic-full,
+.icon-btn .ic-clip {
   display: block;
   pointer-events: none;
 }
@@ -1159,27 +1160,54 @@ body {
 
 @media (max-width: 640px) {
   .sub { display: none; }
-  #search { width: 110px; }
-  #search:focus { width: 140px; }
+  /* 顶栏多了一个「分享解析」图标按钮，输入框再让出一点宽度避免挤出屏幕 */
+  .topbar-right { gap: 6px; }
+  #search { width: 96px; }
+  #search:focus { width: 128px; }
   .search-btn { padding: 6px 11px; font-size: 12px; }
   .brand .logo { font-size: 18px; }
   .video-box { max-height: 46vh; }
 }
 
 /*
- * 极窄屏（<=430px）：顶栏元素已经很多（品牌 + 分类 + 搜索 + 4 个图标按钮），
+ * 极窄屏（<=430px）：顶栏元素很多（品牌 + 分类 + 搜索 + 6 个图标按钮），
  * 再按原宽度排必然溢出。这里做两件事：
  *   1) 搜索按钮只留放大镜图标，省下约 34px；
- *   2) 图标按钮缩到 30px，并让输入框可以真正压到很窄仍不溢出。
+ *   2) 图标按钮缩到 28px，并让输入框可以真正压到很窄仍不溢出。
  * 分类标签 .tabs 已有 overflow-x:auto，自己内部滚动，不参与挤压。
  */
 @media (max-width: 430px) {
   .topbar { gap: 10px; padding: 10px 12px; }
-  .topbar-right { gap: 6px; }
-  .topbar-right .icon-btn { width: 30px; height: 30px; font-size: 14px; border-radius: 9px; }
+  .topbar-right { gap: 5px; }
+  .topbar-right .icon-btn { width: 28px; height: 28px; font-size: 14px; border-radius: 9px; }
   .search-btn { padding: 6px 9px; }
   .search-btn .tx-search { display: none; }
   .search-btn .ic-search { display: inline; font-size: 13px; }
-  #search { width: 84px; padding-left: 11px; font-size: 13px; }
-  #search:focus { width: 110px; }
+  #search { width: 70px; padding-left: 11px; font-size: 13px; }
+  #search:focus { width: 100px; }
 }
+
+/* ---------- 分享解析卡片 ---------- */
+#shareModal .modal-card { width: min(520px, 100%); }
+.share-label { display: block; margin: 4px 0 6px; font-size: 13px; color: var(--fg-dim); }
+#shareText {
+  display: block;
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  outline: none;
+}
+#shareText:focus { border-color: var(--brand); }
+#shareText::placeholder { color: var(--fg-mute); }
+.share-hint { margin: 8px 0 0; font-size: 12px; line-height: 1.6; }
+.share-msg { min-height: 18px; margin: 8px 0 0; font-size: 13px; }
+.share-ops { justify-content: flex-end; flex-wrap: wrap; }
+#shareGo:disabled { opacity: .55; cursor: default; }
