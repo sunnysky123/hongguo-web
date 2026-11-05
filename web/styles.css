@@ -1071,6 +1071,69 @@ body {
 .dl-ops { justify-content: flex-end; gap: 10px; margin-top: 10px; }
 .dl-note { margin: 10px 0 0; font-size: 12px; line-height: 1.6; }
 
+/* ---------- 其他季卡片（fixed 贴附，与选集/下载卡片同款定位方式） ---------- */
+.season-card {
+  position: fixed;
+  z-index: 96;
+  width: min(360px, calc(100vw - 16px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow);
+}
+.season-card[hidden] { display: none; }
+.season-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
+.season-loading, .season-empty, .season-err {
+  margin: 0; padding: 6px 4px; font-size: 13px; text-align: center;
+}
+.season-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+  transition: .14s;
+}
+.season-item:hover { border-color: var(--brand); }
+.season-item .poster {
+  flex-shrink: 0;
+  width: 48px;
+  height: 64px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-elev2);
+}
+.season-item .poster img { width: 100%; height: 100%; object-fit: cover; }
+.season-item .poster .ph {
+  width: 100%; height: 100%;
+  display: grid; place-items: center;
+  color: var(--fg-mute);
+  font-size: 11px;
+  background: linear-gradient(150deg, var(--bg-elev2), var(--bg-elev));
+}
+.season-meta { flex: 1; min-width: 0; }
+.season-meta h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.season-meta p { margin: 2px 0 0; font-size: 12px; }
+.season-play {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--fg-mute);
+}
+.season-item:hover .season-play { color: var(--brand); }
+
 /* 顶栏「下载进度」按钮：常驻显示（出现/消失会造成顶栏布局跳变）。
    相对定位供角标锚定；角标绝对定位，显示/隐藏不影响其他按钮布局。 */
 #dlBtn { position: relative; }
