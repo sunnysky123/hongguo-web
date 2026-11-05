@@ -34,6 +34,9 @@ const MAX_ATTEMPTS = 3;
 /** 同一集两次尝试之间的间隔（毫秒），给瞬时故障一个恢复窗口。 */
 const RETRY_DELAY_MS = 800;
 
+/** 同一集最多允许用户手动重试几次（每次重试内部仍按 MAX_ATTEMPTS 尝试）。 */
+const MAX_RETRIES = 3;
+
 /** 同时下载的集数上限。解密是 CPU 密集操作，并发过高会拖慢播放主链路。 */
 function concurrency() {
   const n = Config.num('runtime.download.concurrency', 2);
@@ -85,6 +88,7 @@ function createTask(seriesId, title, sel) {
     done: 0,
     files: [],   // 成功项 {index, size}
     failed: [],  // 失败项 {index, vid, error}
+        retried: new Map(), // 集号 -> 用户手动重试次数
     status: 'running', // running | done | failed（全集失败才算 failed）
     error: null,
     reused: false,     // 是否复用了同剧已在跑的任务
@@ -139,8 +143,10 @@ function snapshot(t) {
     const o = Json.obj();
     o.index = f.index;
     o.error = f.error;
+      o.retries = t.retried.get(f.index) || 0;
     return o;
   });
+    s.max_retries = MAX_RETRIES;
   s.status = t.status;
   s.error = t.error;
   s.reused = t.reused;
@@ -252,8 +258,13 @@ async function downloadOne(t, ep) {
 /**
  * 任务执行体：有界并发地逐集下载，全部结束后收尾。
  * 单集异常已在 downloadOne 内消化，这里只可能被队列本身的问题打断。
+ *
+ * @param {object} t 任务
+ * @param {object[]} sel 本次要下载的剧集
+ * @param {boolean} [isRetry] 是否为失败重试（影响结束日志文案）
  */
-async function run(t, sel) {
+async function run(t, sel, isRetry) {
+  const t0 = Date.now();
   let cursor = 0;
   const worker = async () => {
     for (;;) {
@@ -268,21 +279,97 @@ async function run(t, sel) {
   await Promise.all(workers);
 
   t.finishedAt = Date.now();
-  // 全集失败才算任务失败；部分失败仍算完成（失败集号在快照里给前端展示）
-  t.status = (sel.length > 0 && t.failed.length === sel.length) ? 'failed' : 'done';
-  const secs = ((t.finishedAt - t.startedAt) / 1000).toFixed(1);
+  // 一集都没成功才算任务失败；部分失败仍算完成（失败集号在快照里给前端展示）。
+  // 用 done 判定而不是「失败数 === 本次集数」：重试时 failed 里还留着
+  // 本次没重试的其它失败集，按后者判定会把有成功的任务误标成失败。
+  t.status = t.done === 0 ? 'failed' : 'done';
+  const secs = ((t.finishedAt - t0) / 1000).toFixed(1);
   const failPart = t.failed.length > 0
     ? '，失败 ' + t.failed.length + ' 集（集号：' + t.failed.map((f) => f.index).join('、') + '）'
     : '';
-  Log.info('下载任务 ' + t.id + ' 结束：' + t.title + ' 成功 ' + t.done + '/'
-    + t.total + ' 集' + failPart + '，用时 ' + secs + 's');
+  Log.info((isRetry ? '下载任务 ' + t.id + ' 重试结束：' : '下载任务 ' + t.id + ' 结束：')
+    + t.title + ' 成功 ' + t.done + '/' + t.total + ' 集' + failPart + '，用时 ' + secs + 's');
+}
+
+/**
+ * 重试任务里最终失败的剧集（用户在「下载进度」卡片里手动触发）。
+ *
+ * 与 start 的区别：
+ *   - 不新建任务，直接在原任务对象上继续跑，前端看到的 id 不变、进度条延续；
+ *   - 本次要下的不是集号范围，而是失败列表里的集号，需要重新取剧集拿 vid；
+ *   - 同一集最多手动重试 MAX_RETRIES 次，防止无限重试。
+ *
+ * @param {string} id 任务 id
+ * @param {number[]|null} indexes 指定重试的集号；null / 空数组 = 全部失败集
+ * @returns {Promise<object>} 任务（已回到 running）
+ * @throws {Error} 任务不存在 / 进行中 / 无失败集 / 集号不在失败列表 / 已达重试上限
+ */
+async function retry(id, indexes) {
+  const t = get(id);
+  if (t === null) throw new Error('任务不存在或已过期');
+  if (t.status === 'running') throw new Error('该任务正在下载中，请等待当前任务结束');
+  if (t.failed.length === 0) throw new Error('该任务没有失败的剧集');
+
+  const want = (indexes === null || indexes === undefined || indexes.length === 0)
+    ? null : indexes.map((i) => Number(i));
+  const picked = want === null ? t.failed.slice() : t.failed.filter((f) => want.indexOf(Number(f.index)) !== -1);
+  if (picked.length === 0) throw new Error('指定的集号不在失败列表中');
+
+  const allowed = picked.filter((f) => (t.retried.get(Number(f.index)) || 0) < MAX_RETRIES);
+  if (allowed.length === 0) {
+    throw new Error('失败剧集已达重试上限（每集最多 ' + MAX_RETRIES + ' 次）');
+  }
+
+  const detail = await Client.getEpisodes(t.seriesId);
+  const epsAll = Json.optArr(detail === null || detail === undefined ? null : detail.episodes);
+  const byIndex = new Map();
+  for (const eObj of epsAll) {
+    const e = Json.optObj(eObj);
+    if (e !== null) byIndex.set(Number(e.index), e);
+  }
+
+  const sel = [];
+  for (const f of allowed) {
+    const idx = Number(f.index);
+    const ep = byIndex.get(idx);
+    if (ep === undefined) {
+      // 上游已没有这一集：保留原失败记录，只提示，不静默吞掉
+      Log.warn('重试下载 ' + t.title + ' 第 ' + idx + ' 集失败：上游已无该集，跳过');
+      continue;
+    }
+    t.retried.set(idx, (t.retried.get(idx) || 0) + 1);
+    sel.push(ep);
+  }
+  if (sel.length === 0) throw new Error('失败剧集在上游已不存在，无法重试');
+
+  // 先把待重试的失败项摘掉：downloadOne 失败时会重新 push 一条，
+  // 不摘的话同一集会在列表里出现两次（成功时也不会残留旧失败记录）。
+  const retrySet = new Set(sel.map((e) => Number(e.index)));
+  t.failed = t.failed.filter((f) => !retrySet.has(Number(f.index)));
+
+  t.status = 'running';
+  t.error = null;
+  t.finishedAt = 0;
+  Log.info('下载任务 ' + t.id + ' 重试 ' + sel.length + ' 集：' + t.title
+    + ' 第 ' + sel.map((e) => Number(e.index)).join('、') + ' 集');
+
+  // 与 start 一样不 await：立即返回快照，任务在后台跑。
+  run(t, sel, true).catch((e) => {
+    t.status = 'failed';
+    t.error = errMsg(e);
+    t.finishedAt = Date.now();
+    Log.error('下载任务 ' + t.id + ' 重试异常终止：' + errMsg(e));
+  });
+  return t;
 }
 
 module.exports = {
   downloadDir,
   start,
+  retry,
   get,
   runningOf,
   snapshot,
   MAX_ATTEMPTS,
+  MAX_RETRIES,
 };

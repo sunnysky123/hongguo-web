@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.2.2` 为例） |
+| 你的系统 | 下载的文件（`1.2.3` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.2-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.2-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.2-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.2-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.2-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.2-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.2-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.3-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.3-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.3-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.3-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.3-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.3-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.3-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.2.2-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.2.3-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.2.2-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.2.3-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -295,6 +295,10 @@ node -v          # 需 18+
   之后可随时点击**主页右上角「⤓」按钮**（位于「收藏」与「切换主题」之间）重新打开，
   按钮角标显示进行中的任务数，多个剧的任务在卡片里并列展示，关闭卡片不影响后台下载；
   同一部剧同时只跑一个任务，重复发起会直接回到那个任务的进度；
+- **失败剧集可手动重试**：任务结束后若存在失败集，进度卡片该行右侧会出现**「失败重试」按钮**，
+  点击后在**原任务上继续跑**（任务 id 不变、进度条延续），只重下失败的那些集，成功集不重复下载；
+  每集最多手动重试 **3 次**（每次重试内部仍按上面的 3 次尝试），防止无限重试 —— 已达上限的集
+  按钮会置灰并提示原因；
 - 已播放过的集会命中解密缓存，复制即完成，不会重复下载；
 - 播放失败覆盖层里的**「下载本集」**走的是**同一条链路**，只是把范围收窄成当前这一集
   （`start === end`）：任务照样进前端任务表，顶栏「⤓」的角标与进度卡片里能看到它；
@@ -370,6 +374,7 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/img?u=<URL>` | 图片代理（含 HEIC 转换） |
 | POST | `/download/task` | **下载剧集**（body `{series_id,start,end}`，后台执行，返回任务快照；`start === end` 就是下载单集） |
 | GET | `/download/task?id=` | 查询下载任务进度（`done`/`total`/`failed`/`status`） |
+| POST | `/download/task/retry` | **重试失败剧集**（body `{id,indexes?}`，在原任务上继续跑，id 不变；`indexes` 省略 = 全部失败集，每集最多手动重试 3 次） |
 | GET | `/stats` | 运行统计 |
 | GET/POST/DELETE | `/admin/keys`, `/admin/keys/revoke` | 密钥管理（需 `ADMIN_TOKEN`） |
 

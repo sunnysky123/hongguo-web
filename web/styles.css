@@ -1102,7 +1102,7 @@ body {
 .dl-task:first-child { border-top: none; }
 .dl-task-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 8px;
@@ -1118,6 +1118,27 @@ body {
 .dl-task-state { flex-shrink: 0; font-size: 12px; color: var(--fg-mute); }
 .dl-task-state.ok { color: var(--ok); }
 .dl-task-state.err { color: var(--err); }
+/* 任务行右侧：重试按钮 + 状态，垂直居中对齐（按钮比文字高） */
+.dl-task-ops {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.dl-task-retry {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-elev2);
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .14s;
+}
+.dl-task-retry:hover { border-color: var(--brand); color: var(--fg); }
+.dl-task-retry:disabled { opacity: .55; cursor: not-allowed; border-color: var(--line); }
 .dl-task-sub { margin: 8px 0 0; font-size: 12px; line-height: 1.6; word-break: break-all; }
 .dl-prog-ops { justify-content: flex-end; gap: 10px; margin-top: 16px; }
 
