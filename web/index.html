@@ -27,6 +27,16 @@
         <span class="ic-search" aria-hidden="true">🔍</span><span class="tx-search">搜索</span>
       </button>
     </div>
+    <!-- 分享解析：粘贴红果 App 分享文案，识别后直接用播放器打开对应剧集 -->
+    <button id="shareBtn" class="icon-btn" title="分享解析 · 粘贴红果分享链接" aria-label="分享解析">
+      <svg class="ic-clip" viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"
+           fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 4H7a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2"/>
+        <rect x="9" y="2" width="6" height="4" rx="1"/>
+        <path d="M9 12h6M9 16h4"/>
+      </svg>
+    </button>
     <button id="histBtn" class="icon-btn" title="播放历史">🕘</button>
     <button id="favBtn" class="icon-btn" title="我的收藏">★</button>
     <!-- 下载进度入口：常驻顶栏（避免出现/消失造成布局跳变），角标为进行中任务数 -->
@@ -199,6 +209,29 @@
       <button id="keyRetry" class="btn" hidden>重新获取</button>
     </div>
     <p id="keyMsg" class="muted"></p>
+  </div>
+</div>
+
+<!-- 分享解析弹层：整段分享文案交给 /share/resolve，命中后直接打开播放器 -->
+<div id="shareModal" class="modal" hidden>
+  <div class="modal-card narrow">
+    <div class="modal-head">
+      <div>
+        <h3>分享解析</h3>
+        <p class="muted">粘贴「红果短剧 App」复制的分享消息，识别后自动播放对应剧集。</p>
+      </div>
+      <button id="shareClose" class="icon-btn" title="关闭">✕</button>
+    </div>
+    <label class="share-label" for="shareText">分享文案 / 链接</label>
+    <textarea id="shareText" rows="4" spellcheck="false"
+      placeholder="可粘贴整段文案，也可只粘贴链接，例如：https://novelquickapp.com/s/…"></textarea>
+    <p class="muted share-hint">整段文案里的《剧名》会作为兜底提示；若分享时正看到第 N 集，
+      播放器将从第 N 集开始。</p>
+    <p id="shareMsg" class="muted share-msg" role="status"></p>
+    <div class="row share-ops">
+      <button id="sharePaste" class="btn" type="button">从剪贴板粘贴</button>
+      <button id="shareGo" class="btn primary" type="button">解析并播放</button>
+    </div>
   </div>
 </div>
 

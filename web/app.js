@@ -2310,6 +2310,114 @@
     }
   });
 
+  // ---------- 分享链接解析 ----------
+  /* 顶栏「分享解析」：把红果 App 复制出来的整段分享文案交给 /share/resolve，
+   * 拿到 series_id 与分享所在集号后直接打开播放器。
+   * 不另写一套加载逻辑，复用 openSeries（它会取分集、建选集网格、写播放历史
+   * 并起播）；这里只负责把后端返回的 1 起集号换算成 startAt 的 0 起下标。 */
+  const shareModal = $('shareModal');
+  const shareText = $('shareText');
+  const shareGo = $('shareGo');
+  let shareBusy = false;
+
+  function shareMsg(text, cls = '') {
+    const el = $('shareMsg');
+    el.textContent = text;
+    el.className = 'muted share-msg' + (cls ? ' ' + cls : '');
+  }
+
+  function openShare() {
+    shareMsg('');
+    if (!shareBusy) {
+      shareGo.disabled = false;
+      shareGo.textContent = '解析并播放';
+    }
+    shareModal.hidden = false;
+    shareText.focus();
+  }
+
+  function closeShare() {
+    shareModal.hidden = true;
+  }
+
+  $('shareBtn').addEventListener('click', openShare);
+  $('shareClose').addEventListener('click', closeShare);
+  shareModal.addEventListener('click', (e) => {
+    if (e.target === shareModal) closeShare();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !shareModal.hidden) closeShare();
+  });
+  shareText.addEventListener('keydown', (e) => {
+    // 分享文案通常多行，回车保持换行；Ctrl/⌘ + Enter 才是「解析」
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      shareGo.click();
+    }
+  });
+
+  $('sharePaste').addEventListener('click', async () => {
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.readText) {
+        toast('当前浏览器不支持读取剪贴板，请按 Ctrl+V 粘贴');
+        return;
+      }
+      const text = await navigator.clipboard.readText();
+      if (!text || !text.trim()) { toast('剪贴板里没有文本'); return; }
+      shareText.value = text.trim();
+      shareMsg('');
+      shareText.focus();
+      shareText.setSelectionRange(shareText.value.length, shareText.value.length);
+    } catch {
+      toast('读取剪贴板失败，请按 Ctrl+V 粘贴');
+    }
+  });
+
+  $('shareGo').addEventListener('click', async () => {
+    if (shareBusy) return;
+    const text = shareText.value.trim();
+    if (!text) { shareMsg('请先粘贴分享文案或链接', 'err'); shareText.focus(); return; }
+    shareBusy = true;
+    shareGo.disabled = true;
+    shareGo.textContent = '解析中…';
+    shareMsg('正在识别分享链接…');
+    try {
+      // 用 POST：分享文案可能很长，放 body 里不受 URL 长度限制。
+      // api() 展开 opts 时会覆盖默认请求头，所以这里显式带上密钥头
+      // （查询参数里的 api_key 由 api() 自动补）。
+      const j = await api('/share/resolve', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-api-key': API_KEY },
+        body: JSON.stringify({ text }),
+      });
+      if (!j || !j.series_id) throw new Error('未返回剧集 ID');
+      const ep = j.episode ? Number(j.episode.index) || 0 : 0;
+      // 越界时 openSeries 内的 resolveStart 会安全回落到历史续播或第 1 集
+      const opts = ep > 0 ? { startAt: ep - 1 } : {};
+      closeShare();
+      // 换剧前走 pClose 的完整清理（停播、复位全屏、清空选集）
+      if (!playerEl.hidden) $('pClose').click();
+      await openSeries(j.series_id, j.title || '', opts);
+      if (!playerEl.hidden) {
+        toast('已打开《' + (j.title || '该剧') + '》' + (ep > 0 ? ` · 第 ${ep} 集` : ''));
+      }
+    } catch (e) {
+      if (e && e.status === 401) {
+        closeShare();   // 让自愈弹出的密钥卡片露出来，不被本卡片压住
+        handle401();
+        return;
+      }
+      const msg = e && e.message ? e.message : String(e);
+      // handleError 会把主视图整页换成错误页，弹层内的小错误只在这里提示
+      shareMsg('解析失败：' + msg, 'err');
+      toast('解析失败：' + msg);
+    } finally {
+      shareBusy = false;
+      shareGo.disabled = false;
+      shareGo.textContent = '解析并播放';
+    }
+  });
+
   // ---------- 启动 ----------
   (async function boot() {
     renderApiInfo();

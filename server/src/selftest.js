@@ -20,6 +20,7 @@ const Safeguards = require('./core/safeguards');
 const Spade = require('./core/spade');
 const AppSource = require('./service/app-source');
 const Client = require('./service/client');
+const ShareLink = require('./service/share-link');
 const Stream = require('./service/stream');
 const KeyStore = require('./core/keystore');
 const Device = require('./core/device');
@@ -1158,6 +1159,101 @@ function cencStrip() {
   }
 }
 
+/**
+ * 21. 分享链接解析（纯文本，不访问网络）。
+ * 覆盖：整段分享文案抠 URL / 剧名、域名白名单防 SSRF、
+ * 落地页 URL + SSR flight 分块解析、标题兜底与剧名归一化。
+ */
+function shareLink() {
+  section('21. 分享链接解析（纯文本，不依赖网络）');
+
+  const sample = '漫剧《冷宫开席：陛下又来蹭饭了第四季》 - 免费好剧，尽在红果\r\n'
+    + '点击链接打开👉https://novelquickapp.com/s/5em_xJT-hmg/\r\n'
+    + '复制本条消息后，打开「红果短剧App」后免费看全集~';
+  const p = ShareLink.parseShareText(sample);
+  check('整段分享文案抠出短链',
+    p.url === 'https://novelquickapp.com/s/5em_xJT-hmg/', p.url);
+  check('整段分享文案抠出剧名提示',
+    p.titleHint === '冷宫开席：陛下又来蹭饭了第四季', p.titleHint);
+  check('URL 尾部中文标点被剔除',
+    ShareLink.parseShareText('https://novelquickapp.com/s/abc/，快来看').url
+      === 'https://novelquickapp.com/s/abc/', '');
+  check('裸链自动补协议',
+    ShareLink.parseShareText('打开 novelquickapp.com/s/abc/ 看看').url
+      === 'https://novelquickapp.com/s/abc/', '');
+  check('无链接时返回空', ShareLink.parseShareText('随便一段文字').url === '', '');
+
+  check('白名单-接受短链域名',
+    ShareLink.allowedHost('https://novelquickapp.com/s/abc/') !== null, '');
+  check('白名单-接受官网子域',
+    ShareLink.allowedHost('https://www.hongguoduanju.com/player/7704293880799185982') !== null, '');
+  check('白名单-拒绝内网',
+    ShareLink.allowedHost('http://127.0.0.1:8000/') === null, '');
+  check('白名单-拒绝无关域名',
+    ShareLink.allowedHost('https://example.com/s/abc/') === null, '');
+  check('白名单-拒绝带账号信息',
+    ShareLink.allowedHost('https://u:p@novelquickapp.com/s/abc/') === null, '');
+  check('白名单-拒绝非标端口',
+    ShareLink.allowedHost('https://novelquickapp.com:22/s/abc/') === null, '');
+
+  const flight = ['video-animation-share_page', 'pageData', {
+    series_data: {
+      title: '冷宫开席：陛下又来蹭饭了第四季',
+      series_cover: 'https://p6-novel-sign.byteimg.com/cover.webp',
+      series_intro: '冷宫之中长大的林小满',
+      serial_count: 109,
+    },
+    chapter_ids: ['7704295597846563865', '7704295599830486041'],
+    chapter_order: 1,
+    used_chapter_id: '7704295597846563865',
+  }];
+  const escaped = Json.stringify(flight).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  const html = '<html><head><title>红果短剧 ｜ 跟我一起免费看《冷宫开席：陛下又来蹭饭了第四季》'
+    + '</title></head><body><script async data-fn-args="' + escaped + '"></script></body></html>';
+  const landing = 'https://novelquickapp.com/hongguo/ug/pages/video-animation-share'
+    + '?video_id=7704293880799185982&vid=7704295599830486041'
+    + '&share_toast_vid=7704295597846563865&page_type=video-animation-share'
+    + '&report_params=' + encodeURIComponent(Json.stringify({
+      content_type: 'motion_comic', content_id: '7704295599830486041',
+    }));
+  const info = ShareLink.parseLanding(landing, html, '');
+  check('落地页-video_id 即 series_id',
+    info.seriesId === '7704293880799185982' && info.seriesIdFrom === 'video_id',
+    info.seriesId + '/' + info.seriesIdFrom);
+  check('落地页-SSR 剧名',
+    info.title === '冷宫开席：陛下又来蹭饭了第四季', info.title);
+  check('落地页-集数 / 封面 / 简介',
+    info.episodeCnt === 109 && info.cover !== '' && info.intro === '冷宫之中长大的林小满', '');
+  check('落地页-分享集 vid', info.vid === '7704295599830486041', info.vid);
+  check('落地页-分集表', info.chapterIds.length === 2, String(info.chapterIds.length));
+  check('落地页-页面/内容类型',
+    info.pageType === 'video-animation-share' && info.contentType === 'motion_comic', '');
+
+  const noFlight = ShareLink.parseLanding(
+    'https://novelquickapp.com/hongguo/ug/pages/video-share?series_id=7704293880799185982',
+    '<title>红果短剧 ｜ 跟我一起免费看《测试剧第二季》</title>', '');
+  check('无 SSR 时用 <title> 兜底剧名', noFlight.title === '测试剧第二季', noFlight.title);
+  check('显式 series_id 优先',
+    noFlight.seriesId === '7704293880799185982' && noFlight.seriesIdFrom === 'series_id',
+    noFlight.seriesIdFrom);
+  const player = ShareLink.parseLanding(
+    'https://hongguoduanju.com/player/7704293880799185982', '', '《提示剧名》');
+  check('官网播放页路径取 series_id',
+    player.seriesId === '7704293880799185982' && player.seriesIdFrom === 'player_path',
+    player.seriesId);
+  check('文案《...》最终兜底剧名', player.title === '提示剧名', player.title);
+
+  check('剧名归一化忽略标点空白',
+    ShareLink.normalizeTitle('冷宫开席：陛下又来蹭饭了 第四季')
+      === '冷宫开席陛下又来蹭饭了第四季', '');
+  check('同名相似度 100',
+    ShareLink.titleScore('冷宫开席：陛下又来蹭饭了第四季', '冷宫开席:陛下又来蹭饭了第四季') === 100, '');
+  check('不同季不等价',
+    ShareLink.titleScore('冷宫开席：陛下又来蹭饭了第四季', '冷宫开席：陛下又来蹭饭了第三季') < 100, '');
+  check('HTML 实体单次扫描解码',
+    ShareLink.decodeHtml('&amp;quot;') === '&quot;', ShareLink.decodeHtml('&amp;quot;'));
+}
+
 // ==================== 入口 ====================
 
 async function run() {
@@ -1187,6 +1283,7 @@ async function run() {
     searchPageSlice();
     appSource();
     cencStrip();
+    shareLink();
   } catch (e) {
     failed++;
     console.log('  ✗ 自检异常中断：' + e);
