@@ -53,8 +53,8 @@
 
   /* ---------- 播放历史 / 收藏 ----------
    * 都存在 localStorage：
-   *   hg_history  播放历史，数组，最近的在前，每项 {sid,title,cover,ep,epIndex,at}
-   *   hg_fav      收藏，数组，{sid,title,cover,ep,at}
+   *   hg_history  播放历史，数组，最近的在前，每项 {sid,title,cover,ep,copyright,at}
+   *   hg_fav      收藏，数组，{sid,title,cover,ep,copyright,at}
    *
    * 只记「播到第几集」，不记播放时间（按需求）。不记 vid：
    * 集数以 series_id 重新向 /episodes 拉取即可，条目不会因上游变动而失效。
@@ -103,7 +103,8 @@
       }
       list.unshift({
         sid, title: item.title || '未命名', cover: item.cover || '',
-        ep: Number(item.ep) || 0, total: Number(item.total) || 0, at: Date.now(),
+        ep: Number(item.ep) || 0, total: Number(item.total) || 0,
+        copyright: item.copyright || '', at: Date.now(),
       });
       this.write('fav', list);
       return true;
@@ -141,6 +142,7 @@
       list.unshift({
         sid, title: item.title || '未命名', cover: item.cover || '',
         ep: Number(item.ep) || 0, total: Number(item.total) || 0,
+        copyright: item.copyright || '',
         at: atStart ? Date.now() : (Number(item.at) || Date.now()),
         _t: Date.now(),
       });
@@ -352,7 +354,10 @@
         // 统一以 series_id 打开：搜索/最新榜单的卡片虽然带 vid，
         // 但那是「某一集」的 vid，直接播会没有剧集条，故一律走剧集列表。
         // 仅当上游没给 series_id 时才退化为单集播放。
-        if (sid) openSeries(sid, title);
+        // /rank、/latest、/browse、/search 本就返回 copyright，
+        // state.items 存的是完整对象，按 sid 反查即可，不必另发请求。
+        const item = state.items.find((x) => String(x.series_id) === String(sid));
+        if (sid) openSeries(sid, title, { copyright: item ? item.copyright : '' });
         else openPlayer({ vid: el.dataset.vid }, title);
       });
     });
@@ -829,6 +834,7 @@
   const ctx = {
     seriesId: '', title: '', episodes: [], index: -1,
     cover: '', total: 0, // cover/total 供历史与收藏列表展示
+    copyright: '', // 制作方：来自列表数据，随播放写入历史/收藏以便续播复用
     // 「本次打开该剧后的首次起播」标记，供 recordHistory 判断是否刷新历史时间戳。
     // 由 openSeries 置 true，playAt 消费后置回 false。
     freshOpen: false,
@@ -896,6 +902,25 @@
     $('pInfoPop').hidden = !open;
   }
 
+  /**
+   * 设置制作方信息。text 为空时隐藏「制作方」按钮（不占位，标题行不抖动）。
+   * 数据来自 /episodes 的 meta.copyright（上游列表接口的 Copyright 字段）。
+   */
+  function setCopyright(text) {
+    const btn = $('pMakerBtn');
+    const pop = $('pMakerPop');
+    const t = String(text || '').trim();
+    if (!t) { btn.hidden = true; pop.hidden = true; return; }
+    // 与简介一致按纯文本渲染，避免公司名里的尖括号破坏 DOM
+    pop.textContent = t;
+    btn.hidden = false;
+  }
+
+  /** 打开/关闭制作方气泡。open=true 显示，false 隐藏。 */
+  function toggleMaker(open) {
+    $('pMakerPop').hidden = !open;
+  }
+
   /** 关闭选集卡片（由下方交互块赋值实现，这里先声明以便各处直接调用）。 */
   let closeEpCard = () => {};
 
@@ -907,6 +932,8 @@
    *   - startAt 起始集序号（0 起）。历史/收藏「继续播放」传它。
    *     它在 resolveStart 里优先级最高，会盖掉「接着上次播」的推断，
    *     因此从历史/收藏恢复时不需要额外的开关参数。
+   *   - copyright 制作方，来自列表数据（/rank、/latest、/browse、/search
+   *     都返回该字段），详情接口通常没有；缺省时回落 meta.copyright。
    */
   async function openSeries(seriesId, title, opts = {}) {
     setStatus('获取剧集…');
@@ -929,8 +956,15 @@
       closeDlModal();
       closeSeasonCard(); // 换剧：关掉上一部残留的其他季卡片（函数声明已提升，可在此直接调用）
       playerEl.hidden = false;
-      // 简介交给悬浮气泡；集数按钮只显示当前集数（每集刷新，不再消失）
+      // 简介与制作方交给悬浮气泡；集数按钮只显示当前集数（每集刷新，不再消失）
       setAbstract(meta.abstract || '');
+      // 制作方来自列表数据（opts.copyright），详情页通常没有该字段，仅作回落。
+      // 少数入口（分享解析、其他季、旧历史记录）拿不到列表数据，
+      // 再用本机播放历史里同剧的记录兜底 —— 全程零额外请求。
+      const rec = LIB.read('history').find((x) => x.sid === String(seriesId));
+      ctx.copyright = String(opts.copyright || meta.copyright
+        || (rec && rec.copyright) || '').trim();
+      setCopyright(ctx.copyright);
       syncFavBtn();
       syncRelBtn();
       syncDlBtn();
@@ -998,9 +1032,10 @@
   function openPlayer({ vid }, title) {
     ctx.seriesId = ''; ctx.title = title || '播放';
     ctx.episodes = []; ctx.index = -1;
-    ctx.cover = ''; ctx.total = 0;
+    ctx.cover = ''; ctx.total = 0; ctx.copyright = '';
     $('pTitle').textContent = ctx.title;
     setAbstract(''); // 单集播放无简介，按钮隐藏
+    setCopyright(''); // 单集播放无剧集信息，制作方按钮也隐藏
     $('pEpGrid').innerHTML = '';
     closeEpCard();
     closeDlModal();
@@ -1048,6 +1083,7 @@
       cover: ctx.cover,
       ep,
       total: ctx.total,
+      copyright: ctx.copyright,
     }, fresh);
     // 已收藏的剧同步更新收藏条目里的集数，避免收藏列表的进度长期停在收藏那一刻
     LIB.syncFavEp(ctx.seriesId, ep);
@@ -1364,21 +1400,20 @@
     if (vid) play(vid);
   });
 
-  // ---------- 简介悬浮气泡 ----------
-  // 说明：简介默认完全隐藏，只在 hover「简介」按钮时浮出。
+  // ---------- 悬浮气泡（制作方 / 简介） ----------
+  // 说明：两者都默认完全隐藏，只在 hover / focus 对应按钮时浮出，
   // 这样常驻文案不会因为 playAt 的二次刷新而消失，标题行高度始终稳定。
+  // 用同一套工厂绑定两个气泡，并互斥，避免两个 z-index 相同的气泡叠在一起。
   {
-    const infoBtn = $('pInfoBtn');
-    const infoPop = $('pInfoPop');
-    let hideTimer = null;
+    const pops = [];
 
     // 气泡是 position:fixed，需按按钮实时定位（fixed 脱离 overflow 裁剪）
-    function place() {
-      if (infoBtn.hidden || infoPop.hidden) return;
-      const b = infoBtn.getBoundingClientRect();
+    function place(btn, pop) {
+      if (btn.hidden || pop.hidden) return;
+      const b = btn.getBoundingClientRect();
       const gap = 6;
-      const w = infoPop.offsetWidth;
-      const h = infoPop.offsetHeight;
+      const w = pop.offsetWidth;
+      const h = pop.offsetHeight;
       // 水平：以按钮为准，超出视口则夹紧
       let left = b.left;
       if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
@@ -1388,48 +1423,63 @@
       if (top + h > window.innerHeight - 8) {
         top = Math.max(8, b.top - h - gap);
       }
-      infoPop.style.left = `${Math.round(left)}px`;
-      infoPop.style.top = `${Math.round(top)}px`;
+      pop.style.left = `${Math.round(left)}px`;
+      pop.style.top = `${Math.round(top)}px`;
     }
 
-    const show = () => {
-      clearTimeout(hideTimer);
-      if (infoBtn.hidden) return;
-      infoPop.hidden = false;
-      place();
-    };
-    const hide = (delay) => {
-      clearTimeout(hideTimer);
-      // 延迟关闭，便于鼠标从按钮移到气泡上阅读
-      hideTimer = setTimeout(() => { infoPop.hidden = true; }, delay || 0);
-    };
+    function bind(btnId, popId) {
+      const btn = $(btnId);
+      const pop = $(popId);
+      let hideTimer = null;
+      const show = () => {
+        clearTimeout(hideTimer);
+        if (btn.hidden) return;
+        for (const p of pops) { if (p !== pop) p.hidden = true; }
+        pop.hidden = false;
+        place(btn, pop);
+      };
+      const hide = (delay) => {
+        clearTimeout(hideTimer);
+        // 延迟关闭，便于鼠标从按钮移到气泡上阅读
+        hideTimer = setTimeout(() => { pop.hidden = true; }, delay || 0);
+      };
 
-    // 桌面端 hover 即可；触屏无 hover，故用 click 切换
-    infoBtn.addEventListener('mouseenter', show);
-    infoBtn.addEventListener('mouseleave', () => hide(180));
-    infoBtn.addEventListener('focus', show);
-    infoBtn.addEventListener('blur', () => hide(180));
-    // 气泡本身也要能悬停阅读，移出后才关闭
-    infoPop.addEventListener('mouseenter', show);
-    infoPop.addEventListener('mouseleave', () => hide(0));
-    infoBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (infoPop.hidden) show(); else infoPop.hidden = true;
-    });
+      // 桌面端 hover 即可；触屏无 hover，故用 click 切换
+      btn.addEventListener('mouseenter', show);
+      btn.addEventListener('mouseleave', () => hide(180));
+      btn.addEventListener('focus', show);
+      btn.addEventListener('blur', () => hide(180));
+      // 气泡本身也要能悬停阅读，移出后才关闭
+      pop.addEventListener('mouseenter', show);
+      pop.addEventListener('mouseleave', () => hide(0));
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pop.hidden) show(); else pop.hidden = true;
+      });
+      pops.push(pop);
+      return { btn, pop, place: () => place(btn, pop) };
+    }
+
+    const entries = [bind('pMakerBtn', 'pMakerPop'), bind('pInfoBtn', 'pInfoPop')];
+
     document.addEventListener('click', (e) => {
-      if (!infoPop.hidden
-        && !infoPop.contains(e.target) && !infoBtn.contains(e.target)) {
-        infoPop.hidden = true;
+      for (const it of entries) {
+        if (!it.pop.hidden
+          && !it.pop.contains(e.target) && !it.btn.contains(e.target)) {
+          it.pop.hidden = true;
+        }
       }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') infoPop.hidden = true;
+      if (e.key === 'Escape') { for (const it of entries) it.pop.hidden = true; }
     });
-    // 窗口尺寸变化时重新定位，避免气泡跑偏
+    // 窗口尺寸变化时重新定位，避免气泡跑偏。
     // 视口尺寸变化后按钮位置会移动，已展开的气泡需重新贴合。
     // 注意 resize 本身会让鼠标离开按钮、触发 mouseleave 而关闭气泡，
     // 所以这里只处理「窗口变化但指针仍悬停」的场景（如拖拽边框、缩放未触发 mouseleave）。
-    window.addEventListener('resize', () => { if (!infoPop.hidden) place(); });
+    window.addEventListener('resize', () => {
+      for (const it of entries) if (!it.pop.hidden) it.place();
+    });
   }
 
   /**
@@ -1866,7 +1916,7 @@
     const ep = ctx.episodes[ctx.index];
     const on = LIB.toggleFav({
       sid: ctx.seriesId, title: ctx.title, cover: ctx.cover,
-      ep: (ep && ep.index) || 1, total: ctx.total,
+      ep: (ep && ep.index) || 1, total: ctx.total, copyright: ctx.copyright,
     });
     paintFavBtn(on);
     toast(on ? '已加入收藏' : '已取消收藏', 1600);
@@ -1946,11 +1996,16 @@
     try {
       const data = await api(
         `/seasons?series_id=${encodeURIComponent(sid)}&title=${encodeURIComponent(title)}`
+          + `&copyright=${encodeURIComponent(ctx.copyright || '')}`
       );
       if (myReq !== seasonReqId) return; // 期间换了剧，丢弃过期结果
       const seasons = (data && data.seasons) || [];
       if (!seasons.length) {
-        body.innerHTML = '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
+        // 有制作方时结果会被按制作方过滤，空态要说清原因，别让人以为是没搜到
+        const maker = String((data && data.copyright) || '').trim();
+        body.innerHTML = maker
+          ? `<p class="muted season-empty">暂未找到「${esc(maker)}」制作的其他季。</p>`
+          : '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
       } else {
         body.innerHTML = seasons.map((s) => {
           const img = s.cover ? coverUrl(s.cover) : '';
@@ -1961,6 +2016,7 @@
           const label = s.season && s.season !== 1 ? `第 ${s.season} 季` : '第一季';
           const epNote = s.episode_cnt ? `共 ${s.episode_cnt} 集` : '';
           return `<button class="season-item" data-sid="${esc(s.series_id)}" data-title="${esc(s.title)}"
+            data-copyright="${esc(s.copyright || '')}"
             aria-label="播放《${esc(s.title)}》">
             ${poster}
             <div class="season-meta">
@@ -1973,7 +2029,8 @@
         body.querySelectorAll('.season-item').forEach((b) => {
           b.addEventListener('click', () => {
             closeSeasonCard();
-            openSeries(b.dataset.sid, b.dataset.title);
+            openSeries(b.dataset.sid, b.dataset.title,
+              { copyright: b.dataset.copyright || '' });
           });
         });
       }
@@ -2070,7 +2127,10 @@
       return;
     }
     const item = LIB.read(libKind).find((x) => x.sid === sid);
-    openSeries(sid, item ? item.title : '', { startAt: idx });
+    // 旧记录没有 copyright 字段，openSeries 会自动回落到历史/详情
+    openSeries(sid, item ? item.title : '', {
+      startAt: idx, copyright: item ? item.copyright : '',
+    });
   }
 
   $('histBtn').addEventListener('click', () => openLib('history'));
@@ -2145,6 +2205,8 @@
     $('pRetryBtn').hidden = true;
     setAbstract('');
     toggleInfo(false);
+    setCopyright('');
+    toggleMaker(false);
     closeEpCard();
     closeDlModal();
     // 清掉主体后同步收藏按钮：没有可收藏的剧时按钮应隐藏，
@@ -2153,6 +2215,7 @@
     ctx.title = '';
     ctx.cover = '';
     ctx.total = 0;
+    ctx.copyright = '';
     ctx.freshOpen = false;
     syncFavBtn();
     syncRelBtn();
@@ -2487,6 +2550,7 @@
       const ep = j.episode ? Number(j.episode.index) || 0 : 0;
       // 越界时 openSeries 内的 resolveStart 会安全回落到历史续播或第 1 集
       const opts = ep > 0 ? { startAt: ep - 1 } : {};
+      opts.copyright = j.copyright || '';
       closeShare();
       // 换剧前走 pClose 的完整清理（停播、复位全屏、清空选集）
       if (!playerEl.hidden) $('pClose').click();

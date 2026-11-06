@@ -477,7 +477,7 @@ body {
   .modal.ve-full .video-box { transition: none; }
 }
 
-/* 标题行：剧名 + 简介按钮 */
+/* 标题行：剧名 + 制作方 / 简介 / 关联剧集 / 收藏按钮 */
 .title-row {
   display: flex;
   align-items: center;
@@ -492,10 +492,10 @@ body {
 }
 
 /*
- * 「简介」按钮。
+ * 「制作方」/「简介」等按钮。
  * 之前简介文字直接跟在剧名后面（常驻），而 playAt 里的二次刷新会把它清掉，
  * 于是标题行高度在首帧与后续帧之间来回跳。现改为默认完全隐藏，
- * 只有鼠标悬停/聚焦此按钮才浮出气泡 —— 标题行高度恒定，不再抖动。
+ * 只有鼠标悬停/聚焦按钮才浮出气泡 —— 标题行高度恒定，不再抖动。
  */
 .info-btn {
   flex-shrink: 0;
@@ -517,7 +517,7 @@ body {
 }
 .info-btn[hidden] { display: none; }
 
-/* 简介气泡：fixed 定位，脱离 .modal-card 的 overflow 裁剪 */
+/* 悬浮气泡（制作方 / 简介）：fixed 定位，脱离 .modal-card 的 overflow 裁剪 */
 .info-pop {
   position: fixed;
   z-index: 95;
@@ -542,6 +542,8 @@ body {
 }
 .info-pop:not([hidden]) { opacity: 1; transform: translateY(0); }
 .info-pop[hidden] { display: none; }
+/* 制作方通常只有一行公司名，气泡比长篇简介窄一些 */
+#pMakerPop { width: min(280px, calc(100vw - 32px)); }
 
 /*
  * 视频容器：用固定宽高比撑起占位。

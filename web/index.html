@@ -66,6 +66,9 @@
       <div>
         <div class="title-row">
           <h3 id="pTitle">播放</h3>
+          <!-- 制作方按钮：与「简介」同样的悬浮气泡，内容取自 /episodes 的 meta.copyright -->
+          <button id="pMakerBtn" class="info-btn" aria-describedby="pMakerPop"
+                  title="查看制作方" hidden>制作方</button>
           <!-- 简介按钮：hover/focus 时在下方浮出简介，避免常驻占位导致抖动 -->
           <button id="pInfoBtn" class="info-btn" aria-describedby="pInfoPop"
                   title="查看简介" hidden>简介</button>
@@ -90,7 +93,8 @@
         <button id="pClose" class="icon-btn">✕</button>
       </div>
     </div>
-    <!-- 简介气泡：默认隐藏，hover「简介」时由 CSS 显示 -->
+    <!-- 悬浮气泡：默认隐藏，hover / focus 对应按钮时由 JS 定位并显示 -->
+    <div id="pMakerPop" class="info-pop" role="tooltip" hidden></div>
     <div id="pInfoPop" class="info-pop" role="tooltip" hidden></div>
     <!-- 固定比例容器：视频加载前后尺寸保持一致，避免弹层高度跳动 -->
     <div class="video-box">

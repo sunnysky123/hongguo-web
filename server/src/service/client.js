@@ -480,6 +480,8 @@ function webEpisodesToDetail(web) {
   const title = Json.optStr(web.series_title, '');
   meta.title = title === '' ? sid : title;
   meta.abstract = Json.optStr(web.series_intro, '');
+  // 官网分集页 SSR 没有制作方字段，留空串以保持 meta 形状一致
+  meta.copyright = Json.optStr(web.copyright, '');
   meta.episode_cnt = Json.optLong(web.total, eps.length);
   const st = web.series_status;
   meta.status = (st === 1 || st === '1') ? '完结' : ((st === 0 || st === '0') ? '连载中' : '');
@@ -584,6 +586,9 @@ function parseEpisodeDetail(sid, vd) {
   const title = str(vd, 'series_title');
   meta.title = title === '' ? String(sid) : title;
   meta.abstract = str(vd, 'series_intro');
+  // 制作方：上游列表接口的 Copyright 字段。详情接口通常不返回，
+  // 播放器主要由列表数据带入（见 web/app.js 的 openSeries），这里仅作透传兜底。
+  meta.copyright = str(vd, 'copyright');
   const epCnt = num(vd, 'episode_cnt');
   meta.episode_cnt = epCnt !== 0 ? epCnt : eps.length;
   meta.status = Json.optLong(vd.series_status, 0) === 1 ? '完结' : '连载中';
@@ -1338,6 +1343,31 @@ function sanitize(name) {
 }
 
 /**
+ * 归一化制作方名称用于比较。
+ * 上游同一家公司偶尔带不同空格 / 全角括号，直接 === 会误杀同制作方的剧。
+ * NFKC 统一全半角，去掉所有空白并转小写；不去标点，避免不同公司名被抹平。
+ */
+function normalizeCopyright(s) {
+  return String(s === null || s === undefined ? '' : s)
+    .normalize('NFKC')
+    .replace(/[\s\u3000]+/g, '')
+    .toLowerCase();
+}
+
+/**
+ * 制作方是否视为一致。
+ *
+ * want 为空表示「当前剧制作方未知」（分享解析、单集播放、官网降级等入口），
+ * 此时不启用过滤，保留原有全部结果，避免关联剧集按钮直接失效。
+ * want 非空时严格匹配：条目没给 copyright 也视为不一致而过滤。
+ */
+function copyrightMatches(want, got) {
+  const w = normalizeCopyright(want);
+  if (w === '') return true;
+  return w === normalizeCopyright(got);
+}
+
+/**
  * 查找同一剧的其他季。
  *
  * 原理：把当前剧名解析为「基础名 + 季数」，再用「基础名 + 第」做模糊搜索，
@@ -1350,25 +1380,35 @@ function sanitize(name) {
  *  - 仅当该关键词完全无结果时，才降级用不带「第」的剧名补搜一次，
  *    避免上游把后缀当整词匹配时功能整体失效。
  *
+ * 传入当前剧制作方 copyright 时，只保留制作方一致的条目（两次搜索的结果
+ * 都在下面同一个循环里过滤）；不传或为空则不启用过滤，维持原行为。
+ *
  * 返回结构：
  *   {
  *     series_id,      当前剧 id
  *     series_title,   当前剧名
  *     base_title,     解析出的基础名（如「xxx」，去掉「第X季」）
  *     season,         当前季数（默认 1）
+ *     copyright,      本次用于过滤的制作方（空串表示未启用）
  *     seasons: [      其他季列表
- *       { series_id, title, cover, episode_cnt, season, score }
+ *       { series_id, title, cover, episode_cnt, copyright, season, score }
  *     ]
  *   }
  *
  * @param {string} seriesId 当前剧 id
  * @param {string} seriesTitle 当前剧名（用于解析基础名）
+ * @param {string} [currentCopyright] 当前剧制作方；为空表示不启用过滤
  * @returns {Promise<object>}
  */
-async function findOtherSeasons(seriesId, seriesTitle) {
+async function findOtherSeasons(seriesId, seriesTitle, currentCopyright) {
   const sid = String(seriesId === null || seriesId === undefined ? '' : seriesId).trim();
   const stitle = String(seriesTitle === null || seriesTitle === undefined ? '' : seriesTitle).trim();
-  if (sid === '' || stitle === '') return { series_id: sid, series_title: stitle, base_title: stitle, season: 1, seasons: [] };
+  const copyright = String(currentCopyright === null || currentCopyright === undefined
+    ? '' : currentCopyright).trim();
+  if (sid === '' || stitle === '') {
+    return { series_id: sid, series_title: stitle, base_title: stitle,
+      season: 1, copyright, seasons: [] };
+  }
 
   const { parseSeason, normalizeTitle, titleScore, seasonKeyword } = SeasonUtil;
 
@@ -1383,6 +1423,7 @@ async function findOtherSeasons(seriesId, seriesTitle) {
   out.series_title = stitle;
   out.base_title = baseTitle;
   out.season = curSeason;
+  out.copyright = copyright;
 
   // 主搜：带「第」锚点的关键词，一次覆盖所有季
   let results = [];
@@ -1405,7 +1446,8 @@ async function findOtherSeasons(seriesId, seriesTitle) {
     }
   }
 
-  // 过滤当前剧本身，解析每条的季数，只保留同基础名但不同季的候选
+  // 过滤当前剧本身、制作方不一致的条目，解析季数，只留同基础名不同季的候选。
+  // 主搜与降级补搜的结果都在这里过一遍，过滤条件只写一次。
   const seasons = [];
   const seen = new Set([sid]);
 
@@ -1416,6 +1458,8 @@ async function findOtherSeasons(seriesId, seriesTitle) {
     const rtitle = Json.optStr(item.title, '');
     if (rid === '' || rtitle === '') continue;
     if (rid === sid || seen.has(rid)) continue;
+    // 仅显示与当前制作方一致的剧集；copyright 为空时不启用过滤
+    if (!copyrightMatches(copyright, Json.optStr(item.copyright, ''))) continue;
     seen.add(rid);
 
     const rParsed = parseSeason(rtitle);
@@ -1430,6 +1474,8 @@ async function findOtherSeasons(seriesId, seriesTitle) {
     entry.title = rtitle;
     entry.cover = Json.optStr(item.cover, '');
     entry.episode_cnt = Json.optInt(item.episode_cnt, 0);
+    // 搜索结果本就带 copyright，透传给前端，点开其他季时不必再查
+    entry.copyright = Json.optStr(item.copyright, '');
     entry.season = rParsed.season;
     entry.score = similarity;
     seasons.push(entry);
@@ -1474,6 +1520,8 @@ module.exports = {
   getEpisodes,
   getEpisodesBatch,
   findOtherSeasons,
+  normalizeCopyright,
+  copyrightMatches,
   rank,
   rankPage,
   latest,

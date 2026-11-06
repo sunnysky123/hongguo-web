@@ -2,7 +2,7 @@
 /**
  * 自检套件。
  *
- * 共 21 组算法与环境探测基线，全部用例不依赖网络与外部服务。
+ * 共 22 组算法与环境探测基线，全部用例不依赖网络与外部服务。
  *
  * 运行态适配层：
  *  - 环境变量注入                   ->  process.env
@@ -465,6 +465,7 @@ function episodeTitle() {
   const vd = Json.obj();
   vd.series_intro = intro;
   vd.series_title = '测试剧';
+  vd.copyright = '某某制作方';
   vd.episode_cnt = 2;
   const vl = Json.arr();
 
@@ -495,6 +496,8 @@ function episodeTitle() {
     Json.optStr(a2.title, '') === '第 2 集', '');
   check('meta 标题取 series_title',
     Json.optStr(Json.optObj(r.meta).title, '') === '测试剧', '');
+  check('meta 透传 Copyright 制作方',
+    Json.optStr(Json.optObj(r.meta).copyright, '') === '某某制作方', '');
   check('按 index 升序排列',
     Json.optLong(a1.index, 0) === 1 && Json.optLong(a2.index, 0) === 2, '');
 
@@ -519,6 +522,8 @@ function episodeTitle() {
   const wm = Json.optObj(wd.meta);
   const wEps = Json.optArr(wd.episodes);
   check('官网回落: 简介透传', Json.optStr(wm.abstract, '') === intro, '');
+  check('官网回落: 制作方为空串（由列表数据带入）',
+    Json.optStr(wm.copyright, 'x') === '', '');
   check('官网回落: tags 进 category',
     Json.optArr(wm.category).length === 2 && Json.optStr(Json.optArr(wm.category)[1], '') === '穿越', '');
   check('官网回落: series_status=1 => 完结',
@@ -1324,6 +1329,31 @@ function seasonUtil() {
     Season.seasonKeyword('') === '' && Season.seasonKeyword(null) === '', '');
 }
 
+/** 22. 制作方匹配（关联剧集按 Copyright 过滤的纯函数）。 */
+function copyrightMatch() {
+  section('22. 制作方匹配（关联剧集过滤）');
+  const N = Client.normalizeCopyright;
+  const M = Client.copyrightMatches;
+
+  check('归一化去掉首尾与中间空白',
+    N('  某某 文化  传媒 ') === '某某文化传媒', N('  某某 文化  传媒 '));
+  check('归一化统一全角字符',
+    N('ＡＢＣ（北京）文化') === N('ABC(北京)文化'),
+    N('ＡＢＣ（北京）文化') + ' / ' + N('ABC(北京)文化'));
+  check('归一化大小写', N('ABC Studio') === N('abc studio'), '');
+  check('空值归一化为空白串',
+    N(null) === '' && N(undefined) === '' && N('   ') === '', '');
+
+  check('同名制作方匹配', M('青椒剪辑', '青椒剪辑'), '');
+  check('空白 / 全角差异仍匹配',
+    M(' 某某（北京）文化 ', '某某(北京)文化'), '');
+  check('不同制作方被过滤', !M('青椒剪辑', '别的制作方'), '');
+  check('结果缺 copyright 被过滤',
+    !M('青椒剪辑', '') && !M('青椒剪辑', null), '');
+  check('当前制作方为空时不过滤（避免按钮失效）',
+    M('', '任意制作方') && M(null, '') && M(undefined, '任意'), '');
+}
+
 // ==================== 入口 ====================
 
 async function run() {
@@ -1355,6 +1385,7 @@ async function run() {
     cencStrip();
     shareLink();
     seasonUtil();
+    copyrightMatch();
   } catch (e) {
     failed++;
     console.log('  ✗ 自检异常中断：' + e);
