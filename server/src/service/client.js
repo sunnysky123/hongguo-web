@@ -1340,12 +1340,15 @@ function sanitize(name) {
 /**
  * 查找同一剧的其他季。
  *
- * 原理：把当前剧名解析为「基础名 + 季数」，再用「基础名」做模糊搜索，
+ * 原理：把当前剧名解析为「基础名 + 季数」，再用「基础名 + 第」做模糊搜索，
  * 把搜到的所有条目按季数归组，排除当前 series_id，返回其他季列表。
  *
  * 搜索关键词策略：
- *  - 优先取「基础名」（去掉季数修饰词），一次搜索覆盖所有季；
- *  - 若搜不到结果，补搜完整剧名再试一次。
+ *  - 首选「基础名 + 第」（去掉季数修饰词后追加「第」），一次覆盖所有季。
+ *    直接用剧名搜索会先命中同名正片、解说、剪辑等噪声，而「第」正好是
+ *    「<剧名>第X季 / 第X部」的锚点，命中率明显更高；
+ *  - 仅当该关键词完全无结果时，才降级用不带「第」的剧名补搜一次，
+ *    避免上游把后缀当整词匹配时功能整体失效。
  *
  * 返回结构：
  *   {
@@ -1367,12 +1370,13 @@ async function findOtherSeasons(seriesId, seriesTitle) {
   const stitle = String(seriesTitle === null || seriesTitle === undefined ? '' : seriesTitle).trim();
   if (sid === '' || stitle === '') return { series_id: sid, series_title: stitle, base_title: stitle, season: 1, seasons: [] };
 
-  const { parseSeason, normalizeTitle, titleScore } = SeasonUtil;
+  const { parseSeason, normalizeTitle, titleScore, seasonKeyword } = SeasonUtil;
 
   const cur = parseSeason(stitle);
   const baseTitle = cur.base;
   const curSeason = cur.season;
-  const searchKw = baseTitle;
+  // 基础名被解析空时（如剧名就叫「第四季」）退回完整剧名，保证关键词非空
+  const searchKw = seasonKeyword(baseTitle) || seasonKeyword(stitle);
 
   const out = Json.obj();
   out.series_id = sid;
@@ -1380,20 +1384,24 @@ async function findOtherSeasons(seriesId, seriesTitle) {
   out.base_title = baseTitle;
   out.season = curSeason;
 
-  // 用基础名搜索（一次覆盖所有季）
+  // 主搜：带「第」锚点的关键词，一次覆盖所有季
   let results = [];
   try {
     results = await search(searchKw, 20);
   } catch (e) {
-    Log.warn('findOtherSeasons App 搜索失败 (' + searchKw + '): ' + e.message);
+    Log.warn('findOtherSeasons 主搜失败 (' + searchKw + '): ' + e.message);
   }
 
-  // 补搜：基础名无结果时，用完整剧名再试
-  if (results.length === 0 && baseTitle !== stitle) {
-    try {
-      results = await search(stitle, 20);
-    } catch (e) {
-      Log.warn('findOtherSeasons 补搜失败 (' + stitle + '): ' + e.message);
+  // 降级补搜：仅在主关键词完全无结果时用不带「第」的剧名兜底，
+  // 兼容上游按整词匹配、且 parseSeason 误裁基础名的情况。
+  if (results.length === 0) {
+    const fallbackKw = baseTitle !== stitle ? stitle : baseTitle;
+    if (fallbackKw !== '' && fallbackKw !== searchKw) {
+      try {
+        results = await search(fallbackKw, 20);
+      } catch (e) {
+        Log.warn('findOtherSeasons 降级补搜失败 (' + fallbackKw + '): ' + e.message);
+      }
     }
   }
 
