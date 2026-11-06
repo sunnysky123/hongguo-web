@@ -2,9 +2,9 @@
 /**
  * 剧集季数解析与标题相似度工具。
  *
- * 独立成 util 模块，避免 client.js 与 share-link.js 之间的循环依赖：
- *  - season-link 相关的逻辑（normalizeTitle / titleScore）原本住在
- *    share-link.js，但那同时依赖 Client.getEpisodes，若反向引入会形成循环。
+ * 独立成 util 模块，作为 normalizeTitle / titleScore 的唯一实现：
+ *  - share-link.js 与 client.js 都要用这套比对逻辑，统一收在这里
+ *    （share-link 直接 require 本模块，不再各留一份拷贝）。
  *  - 这里只放纯函数，零网络依赖，可被 selftest 离线覆盖。
  */
 
@@ -75,7 +75,7 @@ function parseSeason(title) {
 
 /**
  * 归一化标题用于比对：忽略空白、常见标点、全角差异与大小写。
- * 逻辑与 share-link.js 里的 normalizeTitle 一致，独立一份避免循环依赖。
+ * share-link.js 引用本实现（不再各自维护一份）。
  */
 function normalizeTitle(s) {
   return String(s === null || s === undefined ? '' : s)
@@ -85,8 +85,7 @@ function normalizeTitle(s) {
 }
 
 /**
- * 标题相似度 0~100，逻辑与 share-link.js 的 titleScore 一致：
- * 完全相同 100；包含关系 60~88；公共前缀给 40~75。
+ * 标题相似度 0~100：完全相同 100；包含关系 60~88；公共前缀给 40~75。
  */
 function titleScore(a, b) {
   const x = normalizeTitle(a);

@@ -25,8 +25,9 @@
  *     退回 Client.search(剧名) 精确匹配。
  *  5) 用 vid 在分集列表里定位分享时所在的集号。
  *
- * 纯文本解析函数（parseShareText / parseLanding / normalizeTitle 等）不访问
- * 网络，供自检离线覆盖；resolve 的结果按原始短链缓存 10 分钟。
+ * 纯文本解析函数（parseShareText / parseLanding 等；剧名比对 normalizeTitle /
+ * titleScore 统一来自 util/season）不访问网络，供自检离线覆盖；
+ * resolve 的结果按原始短链缓存 10 分钟。
  */
 const { URL } = require('url');
 
@@ -34,6 +35,7 @@ const Http = require('../util/http');
 const Json = require('../util/json');
 const Log = require('../util/log');
 const Safeguards = require('../core/safeguards');
+const { normalizeTitle, titleScore } = require('../util/season');
 const Client = require('./client');
 
 /** 分享链允许访问的域名（含子域）。服务端会主动请求这些地址，必须白名单化。 */
@@ -116,31 +118,10 @@ function cleanText(s) {
   return decodeHtml(s).replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
 }
 
-/** 归一化剧名用于比对：忽略空白、常见标点、全角差异与大小写。 */
-function normalizeTitle(s) {
-  return String(s === null || s === undefined ? '' : s)
-    .toLowerCase()
-    .replace(/[\s\u3000]+/g, '')
-    .replace(/[《》「」【】\[\]（）()!！?？,，.。:：;；—_~·'"“”‘’|\-]/g, '');
-}
-
 /**
- * 剧名相似度（0~100）。同名 100，包含关系 60~88，长公共前缀给中间分。
- * 用于「第几季」这类极易搜出同系列其他季的场景。
+ * 剧名是否视为同一部（相似度阈值 80）。normalizeTitle / titleScore 的实现
+ * 统一收在 util/season（client.js 的关联剧集也用它），此处只定阈值。
  */
-function titleScore(a, b) {
-  const x = normalizeTitle(a);
-  const y = normalizeTitle(b);
-  if (x === '' || y === '') return 0;
-  if (x === y) return 100;
-  if (x.includes(y) || y.includes(x)) {
-    return Math.max(60, 88 - Math.abs(x.length - y.length) * 2);
-  }
-  let n = 0;
-  while (n < x.length && n < y.length && x[n] === y[n]) n++;
-  return n >= 4 ? Math.min(75, 40 + n * 3) : 0;
-}
-
 function sameTitle(a, b) {
   return titleScore(a, b) >= 80;
 }
@@ -529,12 +510,11 @@ async function resolve(rawText) {
 
 module.exports = {
   ShareLinkError,
-  SHARE_HOSTS,
-  SHARE_UA,
   resolve,
   parseShareText,
   parseLanding,
   allowedHost,
+  // 剧名比对转发自 util/season：selftest 等既有调用方仍走本模块导出
   normalizeTitle,
   titleScore,
   decodeHtml,

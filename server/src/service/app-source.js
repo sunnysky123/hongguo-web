@@ -40,10 +40,7 @@ const Http = require('../util/http');
 const Json = require('../util/json');
 const Log = require('../util/log');
 
-/** 接口地址（尾斜杠固定，签名与路由都以它为准）。 */
-const VIDEO_API = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/';
-
-/** 接口主机（自检与排障用）。 */
+/** 接口主机（自检与排障用）。完整 URL 由 postPlayback 按 host 现拼。 */
 const VIDEO_API_HOST = 'api5-normal-sinfonlineb.fqnovel.com';
 
 /** 备用接口主机：主域空响应时换这条链路重签重发（上游 5.4 同款退路）。 */
@@ -641,7 +638,6 @@ module.exports = {
   cleanUrl,
   decryptSpadeUrl,
   checkedUrl,
-  VIDEO_API,
   VIDEO_API_HOST,
   FALLBACK_VIDEO_HOST,
   VIDEO_UA,

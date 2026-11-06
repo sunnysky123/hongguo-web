@@ -67,10 +67,6 @@ function cacheKey(...parts) {
 
 function stringifyPart(p) {
   if (p === null || p === undefined) return 'null';
-  if (typeof p === 'number') {
-    if (Number.isInteger(p) && Math.abs(p) < 9.007199254740992e15) return String(p);
-    return String(p);
-  }
   return String(p);
 }
 

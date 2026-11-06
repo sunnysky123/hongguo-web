@@ -101,10 +101,6 @@ function readU64Le(b, off) {
   return b.readBigUInt64LE(off);
 }
 
-function putU64Be(b, off, v) {
-  b.writeBigUInt64BE(BigInt.asUintN(64, BigInt(v)), off);
-}
-
 function putU64Le(b, off, v) {
   b.writeBigUInt64LE(BigInt.asUintN(64, BigInt(v)), off);
 }

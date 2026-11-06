@@ -452,8 +452,11 @@ class Server {
       let nextOffset = 0;
       const offset = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
       const seenRaw = q.seen;
-      if (offset > 0 || (seenRaw !== undefined && seenRaw !== null && seenRaw !== '')) {
-        const seen = seenRaw.split(',');
+      let seen = null;
+      if (seenRaw !== undefined && seenRaw !== null && seenRaw !== '') {
+        seen = seenRaw.split(',');
+      }
+      if (offset > 0 || seen !== null) {
         const pg = await Client.browsePage(genre, opts, seen, offset);
         items = pg.items;
         hasMore = pg.hasMore;
