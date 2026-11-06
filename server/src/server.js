@@ -271,7 +271,7 @@ class Server {
         '/latest?genre=short_play|comic_series|ai_series&only_today=true',
         '/filters?genre=short_play',
         '/browse?genre=ai_series&theme=玄幻&sort=hot_score&days=7',
-        '/episodes?series_id=', '/seasons?series_id=[&title=]',
+        '/episodes?series_id=', '/seasons?series_id=[&title=&copyright=]',
         '/play?series_id=&ep=1-10',
         '/stream?series_id=&ep=1', '/stream?vid=&quality=1080p',
         '/prewarm?vid=', '/stats',
@@ -508,7 +508,10 @@ class Server {
           title = Json.optStr(detail === null || detail === undefined ? '' : (detail.meta && detail.meta.title), '');
         } catch (e) { /* 无法获取剧名时传空，findOtherSeasons 内部会返回空 seasons */ }
       }
-      Res.json(req, res, 200, await Client.findOtherSeasons(sid, title));
+      // copyright 可选：当前剧制作方，传入后只保留制作方一致的其他季
+      const copyright = q.copyright !== undefined && q.copyright !== null
+        ? String(q.copyright).trim() : '';
+      Res.json(req, res, 200, await Client.findOtherSeasons(sid, title, copyright));
       return;
     }
 

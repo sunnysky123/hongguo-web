@@ -367,6 +367,7 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/filters?genre=short_play` | 筛选维度 |
 | GET | `/browse?genre=&theme=&sort=&days=` | 组合浏览 |
 | GET | `/episodes?series_id=` | 剧集列表（播放器「制作方」取自列表接口已有的 `copyright`，此处仅为透传兜底） |
+| GET | `/seasons?series_id=&title=&copyright=` | 关联剧集（其他季）；传 `copyright` 时仅保留与当前制作方一致的结果，不传或为空则不过滤 |
 | POST | `/metrics/batch` | 批量上报播放进度 |
 | GET | `/play?series_id=&ep=1-10` | 取各集直链（`encrypted_url` 为上游直链，可播放用 `stream_url`） |
 | GET | `/video_url?vid=` | 单集取直链 |

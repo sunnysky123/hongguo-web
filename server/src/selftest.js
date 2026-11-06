@@ -2,7 +2,7 @@
 /**
  * 自检套件。
  *
- * 共 21 组算法与环境探测基线，全部用例不依赖网络与外部服务。
+ * 共 22 组算法与环境探测基线，全部用例不依赖网络与外部服务。
  *
  * 运行态适配层：
  *  - 环境变量注入                   ->  process.env
@@ -1329,6 +1329,31 @@ function seasonUtil() {
     Season.seasonKeyword('') === '' && Season.seasonKeyword(null) === '', '');
 }
 
+/** 22. 制作方匹配（关联剧集按 Copyright 过滤的纯函数）。 */
+function copyrightMatch() {
+  section('22. 制作方匹配（关联剧集过滤）');
+  const N = Client.normalizeCopyright;
+  const M = Client.copyrightMatches;
+
+  check('归一化去掉首尾与中间空白',
+    N('  某某 文化  传媒 ') === '某某文化传媒', N('  某某 文化  传媒 '));
+  check('归一化统一全角字符',
+    N('ＡＢＣ（北京）文化') === N('ABC(北京)文化'),
+    N('ＡＢＣ（北京）文化') + ' / ' + N('ABC(北京)文化'));
+  check('归一化大小写', N('ABC Studio') === N('abc studio'), '');
+  check('空值归一化为空白串',
+    N(null) === '' && N(undefined) === '' && N('   ') === '', '');
+
+  check('同名制作方匹配', M('青椒剪辑', '青椒剪辑'), '');
+  check('空白 / 全角差异仍匹配',
+    M(' 某某（北京）文化 ', '某某(北京)文化'), '');
+  check('不同制作方被过滤', !M('青椒剪辑', '别的制作方'), '');
+  check('结果缺 copyright 被过滤',
+    !M('青椒剪辑', '') && !M('青椒剪辑', null), '');
+  check('当前制作方为空时不过滤（避免按钮失效）',
+    M('', '任意制作方') && M(null, '') && M(undefined, '任意'), '');
+}
+
 // ==================== 入口 ====================
 
 async function run() {
@@ -1360,6 +1385,7 @@ async function run() {
     cencStrip();
     shareLink();
     seasonUtil();
+    copyrightMatch();
   } catch (e) {
     failed++;
     console.log('  ✗ 自检异常中断：' + e);

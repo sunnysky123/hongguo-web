@@ -1996,11 +1996,16 @@
     try {
       const data = await api(
         `/seasons?series_id=${encodeURIComponent(sid)}&title=${encodeURIComponent(title)}`
+          + `&copyright=${encodeURIComponent(ctx.copyright || '')}`
       );
       if (myReq !== seasonReqId) return; // 期间换了剧，丢弃过期结果
       const seasons = (data && data.seasons) || [];
       if (!seasons.length) {
-        body.innerHTML = '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
+        // 有制作方时结果会被按制作方过滤，空态要说清原因，别让人以为是没搜到
+        const maker = String((data && data.copyright) || '').trim();
+        body.innerHTML = maker
+          ? `<p class="muted season-empty">暂未找到「${esc(maker)}」制作的其他季。</p>`
+          : '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
       } else {
         body.innerHTML = seasons.map((s) => {
           const img = s.cover ? coverUrl(s.cover) : '';
