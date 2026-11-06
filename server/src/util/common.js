@@ -56,6 +56,17 @@ function escapeRe(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+// ==================== 错误信息 ====================
+
+/**
+ * 取异常文案：Error 用 message，其余原样转字符串；null/undefined 返回 'null'。
+ * 此前 stream.js 与 download.js 各有一份相同实现，统一收敛到这里。
+ */
+function errMsg(e) {
+  if (e === null || e === undefined) return 'null';
+  return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);
+}
+
 // ==================== 访问序 LRU 缓存 ====================
 
 /**
@@ -196,4 +207,4 @@ class LruCache {
   }
 }
 
-module.exports = { sleep, sleepUnref, sleepSync, readFullySync, escapeRe, LruCache };
+module.exports = { sleep, sleepUnref, sleepSync, readFullySync, escapeRe, errMsg, LruCache };

@@ -272,11 +272,10 @@ async function api(method, pathname, body, extraQuery, maxRetries, signed) {
             continue;
           }
         }
-        if (MANAGED) throw e; // 托管模式不刷新被抓包的登录态
+        if (MANAGED) throw e; // 托管模式不自动重试失效的登录态
         last = e;
         if (e instanceof Safeguards.AuthExpiredError) {
-          Log.info('登录态失效，刷新后重试 (' + pathname + ')');
-          refreshSession();
+          Log.info('登录态失效，稍候重试 (' + pathname + ')');
           await Safeguards.sleep(1000);
         } else {
           const wait = Math.pow(2, attempt) + 1;
@@ -294,21 +293,6 @@ async function api(method, pathname, body, extraQuery, maxRetries, signed) {
   }
   if (last !== null) throw last;
   throw new Error('api 失败');
-}
-
-let lastRefresh = 0;
-
-/**
- * 刷新设备身份与登录态。
- *
- * 本地纯代码签名模式下本方法为空操作：设备身份由 Device.ensureDeviceId
- * 本机生成并持久化，token 来自 config.json 的 upstream.session_headers，
- * 不存在需要从外部服务抓取的状态。保留方法签名是为了让 api() 的重试
- * 流程无需为此分支。
- */
-function refreshSession() {
-  if (Date.now() - lastRefresh < 20000) return; // 防抖
-  lastRefresh = Date.now();
 }
 
 // ==================== 数据解析 ====================
@@ -1060,6 +1044,25 @@ class Page {
 }
 
 /**
+ * landpage 列表条目 -> 前端行的公共字段。
+ * latestPage 与 browsePage 对同一条目各补自己的差异字段
+ * （category/today/tags 等），这九个公共字段不再重复抄写。
+ */
+function parseFeedRow(it, sid) {
+  const row = Json.obj();
+  row.series_id = sid;
+  row.title = str(it, 'title');
+  row.episode_cnt = num(it, 'episode_cnt');
+  row.score = hasOwn(it, 'score') ? it.score : '';
+  row.play_cnt = num(it, 'play_cnt');
+  row.cover = str(it, 'cover');
+  row.copyright = str(it, 'copyright');
+  row.abstract = strip(str(it, 'video_desc'), 50);
+  row.vid = str(it, 'vid');
+  return row;
+}
+
+/**
  * 最新上架的一页（供无限滚动）。
  *
  * @param seenIds 已经展示过的 series_id。landpage 接口靠 filter_ids 去重，
@@ -1096,7 +1099,7 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   let hasMore = false;
 
   for (let pages = 0; pages < 20 && out.length < maxItems; pages++) {
-    const body = landpageBody(shown, scene, offset, 18, onlineTime, g);
+    const body = landpageBody(shown, scene, offset, 18, landpageSelect(onlineTime, g));
     const j = await api('POST', '/reading/distribution/category/landpage/v',
       body, null, 3, SIGN_LIST);
     const data = Json.optObj(j.data);
@@ -1128,22 +1131,13 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
         }
       }
 
-      const row = Json.obj();
-      row.series_id = sid;
-      row.title = str(it, 'title');
-      row.episode_cnt = num(it, 'episode_cnt');
-      row.score = hasOwn(it, 'score') ? it.score : '';
-      row.play_cnt = num(it, 'play_cnt');
-      row.cover = str(it, 'cover');
+      const row = parseFeedRow(it, sid);
       row.category = cats.join(' / ');
       row.today = isToday;
-      row.copyright = str(it, 'copyright');
       const tags = [];
       const tagText = str(Json.optObj(it.tag_info), 'text');
       if (tagText !== '') tags.push(tagText);
       row.tags = tags;
-      row.abstract = strip(str(it, 'video_desc'), 50);
-      row.vid = str(it, 'vid');
       out.push(row);
       if (out.length >= maxItems) break;
     }
@@ -1158,8 +1152,11 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   return new Page(out, hasMore, skip + out.length);
 }
 
-/** landpage 接口请求体。 */
-function landpageBody(shown, scene, offset, limit, onlineTime, g) {
+/**
+ * landpage 接口的 select 段：genre 维度 + 上架时间过滤，排序固定「最新上架」。
+ * 供 latestPage 使用；browsePage 的筛选维度更多，自行组装后传给 landpageBody。
+ */
+function landpageSelect(onlineTime, g) {
   const select = Json.obj();
   select.category_dim_epoch = [];
   select.online_time = onlineTime;
@@ -1168,7 +1165,11 @@ function landpageBody(shown, scene, offset, limit, onlineTime, g) {
   select.genre = [g];
   select.sort = ['online_time'];
   select.category_dim_theme = [];
+  return select;
+}
 
+/** landpage 接口请求体（latestPage 与 browsePage 共用，select 由调用方给）。 */
+function landpageBody(shown, scene, offset, limit, select) {
   const body = Json.obj();
   body.filter_ids = shown.join(',');
   body.req_scene = scene;
@@ -1283,16 +1284,7 @@ async function browsePage(genre, opts, seenIds, skip) {
   let hasMore = false;
 
   for (let pages = 0; pages < 20 && out.length < maxItems; pages++) {
-    const body = Json.obj();
-    body.filter_ids = shown.join(',');
-    body.req_scene = gv[0];
-    body.offset = offset;
-    body.need_selector_panel = false;
-    body.limit = 18;
-    body.select_items = select;
-    body.session_id = '';
-    body.req_type = 'only_content';
-    body.client_req_type = 3;
+    const body = landpageBody(shown, gv[0], offset, 18, select);
 
     const j = await api('POST', '/reading/distribution/category/landpage/v',
       body, null, 3, SIGN_LIST);
@@ -1306,18 +1298,9 @@ async function browsePage(genre, opts, seenIds, skip) {
       const sid = String(it.series_id);
       shown.push(sid);
 
-      const row = Json.obj();
-      row.series_id = sid;
-      row.title = str(it, 'title');
-      row.episode_cnt = num(it, 'episode_cnt');
-      row.score = hasOwn(it, 'score') ? it.score : '';
-      row.play_cnt = num(it, 'play_cnt');
-      row.cover = str(it, 'cover');
-      row.copyright = str(it, 'copyright');
+      const row = parseFeedRow(it, sid);
       row.category = parseCategories(it.category_schema).join(' / ');
       row.tags = coverTags(it);
-      row.abstract = strip(str(it, 'video_desc'), 50);
-      row.vid = str(it, 'vid');
       row.comment_count = num(it, 'comment_count');
       row.duration = num(it, 'duration');
       row.horiz_cover = str(it, 'horiz_cover');
@@ -1487,32 +1470,20 @@ async function findOtherSeasons(seriesId, seriesTitle, currentCopyright) {
   return out;
 }
 
+// 仅导出有外部调用方（server.js / selftest.js）的成员：
+// 常量表、请求组装与解析函数（buildUrl/apiOnce/parseCategories 等）只在
+// 本模块内部使用，曾长期挂在导出表上但无人引用，已收敛回私有。
 module.exports = {
   HOST,
   MANAGED,
   SIGN_LIST,
-  COMIC_RANK_CELL,
   RANK_BOARDS,
   RANK_NAMES,
   GENRES,
   GENRE_NAMES,
-  FILTER_CATE,
-  FILTER_SORT,
-  FILTER_GENDER,
-  FILTER_DAYS,
-  FILTER_STATUS,
-  USER_AGENT,
   baseQuery,
   sessionHeaders,
   identity,
-  buildUrl,
-  buildHeaders,
-  apiOnce,
-  api,
-  refreshSession,
-  parseCategories,
-  coverTags,
-  parseSearchCell,
   parseEpisodeDetail,
   webEpisodesToDetail,
   search,
@@ -1531,5 +1502,4 @@ module.exports = {
   browsePage,
   sanitize,
   Page,
-  RankPage,
 };

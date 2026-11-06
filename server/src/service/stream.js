@@ -27,7 +27,7 @@ const Http = require('../util/http');
 const Safeguards = require('../core/safeguards');
 const AppSource = require('../service/app-source');
 const Guard = require('./upstream-guard');
-const { readFullySync } = require('../util/common');
+const { readFullySync, errMsg } = require('../util/common');
 
 /** 默认保留的缓存文件数上限。 */
 const CACHE_MAX_FILES = 30;
@@ -366,12 +366,6 @@ async function prewarmOnce(vid, quality) {
   throw last;
 }
 
-/** 取异常文案。 */
-function errMsg(e) {
-  if (e === null || e === undefined) return 'null';
-  return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);
-}
-
 /**
  * 是否属于「上游整体拒流」类错误：接口连续返回空响应，或已处于熔断冷却中。
  * 这类失败对每一集都成立，逐集告警只会刷屏，统一交给 Guard 节流。
@@ -379,6 +373,15 @@ function errMsg(e) {
 function isUpstreamShed(e) {
   return e !== null && e !== undefined
     && (e.code === 'PLAYBACK_EMPTY_RESPONSE' || e.code === 'PLAYBACK_CIRCUIT_OPEN');
+}
+
+/** 输出「预热最终失败」日志：上游成片故障走节流，其余照常。此前两条重试
+ * 路径（队列执行位与满载降级）各写了一遍相同文案，收敛到这里。 */
+function prewarmFailLog(vid, e) {
+  const msg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
+    + ' 次仍不成功，' + errMsg(e);
+  if (isUpstreamShed(e)) Guard.warn(msg);
+  else Log.warn(msg);
 }
 
 /**
@@ -404,11 +407,7 @@ function runPrewarm(vid, quality) {
         Log.info('跳过预热 ' + vid + '：本集仅 BVC2 片源，浏览器不可播（可下载后本地观看）');
         return;
       }
-      const finalMsg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e);
-      // 整剧预热会为每一集打一条同样的失败：上游成片故障走节流，其他照常
-      if (isUpstreamShed(e)) Guard.warn(finalMsg);
-      else Log.warn(finalMsg);
+      prewarmFailLog(vid, e);
     })
     .finally(() => {
       prewarmActive--;
@@ -427,11 +426,7 @@ async function prewarm(vid, quality) {
     try {
       await prewarmOnce(vid, quality);
     } catch (e) {
-      const finalMsg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
-        + ' 次仍不成功，' + errMsg(e);
-      // 整剧预热会为每一集打一条同样的失败：上游成片故障走节流，其他照常
-      if (isUpstreamShed(e)) Guard.warn(finalMsg);
-      else Log.warn(finalMsg);
+      prewarmFailLog(vid, e);
       return 'failed';
     }
     return 'warming';

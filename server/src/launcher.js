@@ -631,24 +631,6 @@ function waitExit(pid, timeoutMs) {
 /** 异步睡眠（带 unref，不阻止进程退出）；实现见 util/common。 */
 const sleep = sleepUnref;
 
-module.exports = {
-  main,
-  stop: stopRunning,
-  browse,
-  openBrowserWhenReady,
-  browserHost,
-  probe,
-  awaitShutdown,
-  banner,
-  printConfig,
-  stopRunning,
-  isRuntimeProcess,
-  commandLineOf,
-  kill,
-  reportPorts,
-  portBusy,
-  listProcesses,
-  descendants,
-  sleep,
-  sleepSync,
-};
+// 只导出 main：此前内部函数全部挂在导出表上（stop 与 stopRunning 还是同一
+// 函数导了两次），但全仓库只有 main.js 引用 main，其余成员已收敛回私有。
+module.exports = { main };

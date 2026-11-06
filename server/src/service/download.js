@@ -22,6 +22,7 @@ const Config = require('../util/config');
 const Log = require('../util/log');
 const Json = require('../util/json');
 const Safeguards = require('../core/safeguards');
+const { errMsg } = require('../util/common');
 const Client = require('./client');
 const Stream = require('./stream');
 
@@ -57,12 +58,6 @@ function downloadDir() {
 const TASKS = new Map();
 const TASK_KEEP = 50;
 let taskSeq = 0;
-
-/** 取异常文案。 */
-function errMsg(e) {
-  if (e === null || e === undefined) return 'null';
-  return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);
-}
 
 /**
  * 剧名 -> 文件夹名。
