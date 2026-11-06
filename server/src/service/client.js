@@ -480,6 +480,8 @@ function webEpisodesToDetail(web) {
   const title = Json.optStr(web.series_title, '');
   meta.title = title === '' ? sid : title;
   meta.abstract = Json.optStr(web.series_intro, '');
+  // 官网分集页 SSR 没有制作方字段，留空串以保持 meta 形状一致
+  meta.copyright = Json.optStr(web.copyright, '');
   meta.episode_cnt = Json.optLong(web.total, eps.length);
   const st = web.series_status;
   meta.status = (st === 1 || st === '1') ? '完结' : ((st === 0 || st === '0') ? '连载中' : '');
@@ -584,6 +586,9 @@ function parseEpisodeDetail(sid, vd) {
   const title = str(vd, 'series_title');
   meta.title = title === '' ? String(sid) : title;
   meta.abstract = str(vd, 'series_intro');
+  // 制作方：上游列表接口的 Copyright 字段。详情接口通常不返回，
+  // 播放器主要由列表数据带入（见 web/app.js 的 openSeries），这里仅作透传兜底。
+  meta.copyright = str(vd, 'copyright');
   const epCnt = num(vd, 'episode_cnt');
   meta.episode_cnt = epCnt !== 0 ? epCnt : eps.length;
   meta.status = Json.optLong(vd.series_status, 0) === 1 ? '完结' : '连载中';
@@ -1430,6 +1435,8 @@ async function findOtherSeasons(seriesId, seriesTitle) {
     entry.title = rtitle;
     entry.cover = Json.optStr(item.cover, '');
     entry.episode_cnt = Json.optInt(item.episode_cnt, 0);
+    // 搜索结果本就带 copyright，透传给前端，点开其他季时不必再查
+    entry.copyright = Json.optStr(item.copyright, '');
     entry.season = rParsed.season;
     entry.score = similarity;
     seasons.push(entry);

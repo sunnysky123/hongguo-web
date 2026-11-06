@@ -465,6 +465,7 @@ function episodeTitle() {
   const vd = Json.obj();
   vd.series_intro = intro;
   vd.series_title = '测试剧';
+  vd.copyright = '某某制作方';
   vd.episode_cnt = 2;
   const vl = Json.arr();
 
@@ -495,6 +496,8 @@ function episodeTitle() {
     Json.optStr(a2.title, '') === '第 2 集', '');
   check('meta 标题取 series_title',
     Json.optStr(Json.optObj(r.meta).title, '') === '测试剧', '');
+  check('meta 透传 Copyright 制作方',
+    Json.optStr(Json.optObj(r.meta).copyright, '') === '某某制作方', '');
   check('按 index 升序排列',
     Json.optLong(a1.index, 0) === 1 && Json.optLong(a2.index, 0) === 2, '');
 
@@ -519,6 +522,8 @@ function episodeTitle() {
   const wm = Json.optObj(wd.meta);
   const wEps = Json.optArr(wd.episodes);
   check('官网回落: 简介透传', Json.optStr(wm.abstract, '') === intro, '');
+  check('官网回落: 制作方为空串（由列表数据带入）',
+    Json.optStr(wm.copyright, 'x') === '', '');
   check('官网回落: tags 进 category',
     Json.optArr(wm.category).length === 2 && Json.optStr(Json.optArr(wm.category)[1], '') === '穿越', '');
   check('官网回落: series_status=1 => 完结',

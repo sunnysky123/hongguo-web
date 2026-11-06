@@ -389,8 +389,8 @@ function resolveEpisode(info, episodes) {
  *
  * @param {string} rawText 整段分享文案或单条链接
  * @returns {Promise<object>} {ok, share_url, landing_url, series_id, title,
- *   cover, intro, episode_cnt, episode, meta, candidates, matched_by, verified,
- *   page_type, content_type, redirects, episodes_url}
+ *   cover, intro, episode_cnt, episode, meta, candidates, copyright,
+ *   matched_by, verified, page_type, content_type, redirects, episodes_url}
  * @throws {ShareLinkError} 参数非法 / 未识别到剧集 / 分享页打不开
  * @throws {Error} 上游 API 异常（交给 Server.handle 统一转 502）
  */
@@ -509,6 +509,17 @@ async function resolve(rawText) {
   out.episode = resolveEpisode(info, episodes);
   out.meta = meta;
   out.candidates = candidates;
+  // 制作方：标题搜索路径的候选结果自带 copyright；落地页 video_id 主路径
+  // 没有该字段，交给前端用本机播放历史兜底，不额外发请求。
+  let copyright = meta === null ? '' : Json.optStr(meta.copyright, '');
+  for (const c of Json.optArr(candidates)) {
+    const row = Json.optObj(c);
+    if (row !== null && Json.optStr(row.series_id, '') === seriesId) {
+      copyright = Json.optStr(row.copyright, '') || copyright;
+      break;
+    }
+  }
+  out.copyright = copyright;
   out.matched_by = matchedBy;
   out.verified = verified;
   out.episodes_url = '/episodes?series_id=' + encodeURIComponent(seriesId);
