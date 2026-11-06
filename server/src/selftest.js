@@ -1309,6 +1309,19 @@ function seasonUtil() {
   check('titleScore 无关剧 = 0',
     Season.titleScore('冷宫开席', '完全无关剧名') === 0,
     String(Season.titleScore('冷宫开席', '完全无关剧名')));
+
+  check('关联剧集关键词 = 基础名 + 第',
+    Season.seasonKeyword(Season.parseSeason('冷宫开席第四季').base) === '冷宫开席第'
+    && Season.seasonKeyword('某某短剧') === '某某短剧第',
+    Season.seasonKeyword('某某短剧'));
+
+  check('关键词不重复追加「第」且去空白',
+    Season.seasonKeyword('某某第') === '某某第'
+    && Season.seasonKeyword('  某某短剧  ') === '某某短剧第',
+    Season.seasonKeyword('某某第'));
+
+  check('空剧名关键词为空',
+    Season.seasonKeyword('') === '' && Season.seasonKeyword(null) === '', '');
 }
 
 // ==================== 入口 ====================

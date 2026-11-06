@@ -101,4 +101,20 @@ function titleScore(a, b) {
   return n >= 4 ? Math.min(75, 40 + n * 3) : 0;
 }
 
-module.exports = { parseSeason, cnNumToNum, normalizeTitle, titleScore };
+/**
+ * 关联剧集的搜索关键词：在剧名后追加「第」。
+ *
+ * 同一系列的其他季标题通常是「<剧名>第X季 / 第X部」，直接用剧名搜索会
+ * 被同名正片、解说、剪辑等噪声占满前几页；「第」作为锚点能直接筛出
+ * 带季数的系列条目。剧名本身以「第」结尾时不重复追加。
+ *
+ * @param {string} title 剧名（一般由 parseSeason 解析出的基础名）
+ * @returns {string} 搜索关键词；剧名为空时返回空串
+ */
+function seasonKeyword(title) {
+  const t = String(title === null || title === undefined ? '' : title).trim();
+  if (t === '') return '';
+  return t.endsWith('第') ? t : t + '第';
+}
+
+module.exports = { parseSeason, cnNumToNum, normalizeTitle, titleScore, seasonKeyword };
