@@ -1085,6 +1085,22 @@ body {
   box-shadow: var(--shadow);
 }
 .season-card[hidden] { display: none; }
+/* 卡片头部「查找更多」：与 ✕ 同排，比 mini-btn 更小一档，避免压过标题 */
+.season-more {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: .14s;
+}
+.season-more:hover { color: var(--brand); border-color: var(--brand); }
+.season-more[hidden] { display: none; }
 .season-list { display: flex; flex-direction: column; gap: 6px; max-height: 46vh; overflow-y: auto; }
 .season-loading, .season-empty, .season-err {
   margin: 0; padding: 6px 4px; font-size: 13px; text-align: center;

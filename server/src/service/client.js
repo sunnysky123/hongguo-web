@@ -1365,6 +1365,8 @@ function copyrightMatches(want, got) {
  *
  * 传入当前剧制作方 copyright 时，只保留制作方一致的条目（两次搜索的结果
  * 都在下面同一个循环里过滤）；不传或为空则不启用过滤，维持原行为。
+ * allowAnyCopyright 为 true 时忽略制作方过滤（前端「查找更多」用），
+ * 此时结果里会带上各条目自身的 copyright 供前端展示。
  *
  * 返回结构：
  *   {
@@ -1381,13 +1383,15 @@ function copyrightMatches(want, got) {
  * @param {string} seriesId 当前剧 id
  * @param {string} seriesTitle 当前剧名（用于解析基础名）
  * @param {string} [currentCopyright] 当前剧制作方；为空表示不启用过滤
+ * @param {boolean} [allowAnyCopyright] true 时不做制作方过滤（查找更多）
  * @returns {Promise<object>}
  */
-async function findOtherSeasons(seriesId, seriesTitle, currentCopyright) {
+async function findOtherSeasons(seriesId, seriesTitle, currentCopyright, allowAnyCopyright) {
   const sid = String(seriesId === null || seriesId === undefined ? '' : seriesId).trim();
   const stitle = String(seriesTitle === null || seriesTitle === undefined ? '' : seriesTitle).trim();
-  const copyright = String(currentCopyright === null || currentCopyright === undefined
-    ? '' : currentCopyright).trim();
+  const copyright = allowAnyCopyright ? ''
+    : String(currentCopyright === null || currentCopyright === undefined
+      ? '' : currentCopyright).trim();
   if (sid === '' || stitle === '') {
     return { series_id: sid, series_title: stitle, base_title: stitle,
       season: 1, copyright, seasons: [] };
