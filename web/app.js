@@ -1948,8 +1948,21 @@
 
   const seasonCard = $('seasonCard');
   let seasonReqId = 0;
+  // 「查找更多」模式：为 true 时不限制制作方（对应后端 any=1）
+  let seasonAny = false;
 
   function closeSeasonCard() { seasonCard.hidden = true; }
+
+  /** 同步「查找更多」按钮：切换模式后更新文案与提示。 */
+  function syncSeasonMoreBtn() {
+    const btn = $('seasonMore');
+    // 当前剧没有制作方时，默认结果本就不限制作方，按钮没有意义
+    btn.hidden = !String(ctx.copyright || '').trim();
+    btn.textContent = seasonAny ? '仅看同制作方' : '查找更多';
+    btn.title = seasonAny
+      ? '只保留与当前制作方一致的其他季'
+      : '不限制作方，查找该剧的其他季';
+  }
 
   /**
    * 关闭其他已打开的贴附卡片（选集 / 下载 / 其他季三张互斥）。
@@ -1986,6 +1999,8 @@
   function toggleSeasonCard() {
     if (seasonCard.hidden) {
       seasonCard.hidden = false;
+      seasonAny = false; // 每次展开回到「同制作方」，与入口语义一致
+      syncSeasonMoreBtn();
       placeSeasonCard();
       loadSeasons();
     } else {
@@ -1993,6 +2008,10 @@
     }
   }
 
+  /**
+   * 加载其他季列表。按 seasonAny 决定是否限制制作方：
+   * false（默认）= 只查同制作方；true = 「查找更多」，不限制作方。
+   */
   async function loadSeasons() {
     const sid = ctx.seriesId;
     const title = searchNameOf();
@@ -2000,32 +2019,42 @@
     closeAllAttachedCards(seasonCard); // 互斥：查找/刷新前关掉其他贴附卡片
     const body = $('seasonList');
     const myReq = ++seasonReqId;
-    body.innerHTML = '<p class="muted season-loading">正在查找其他季…</p>';
+    body.innerHTML = seasonAny
+      ? '<p class="muted season-loading">正在不限制作方查找其他季…</p>'
+      : '<p class="muted season-loading">正在查找其他季…</p>';
     placeSeasonCard();
     try {
       const data = await api(
         `/seasons?series_id=${encodeURIComponent(sid)}&title=${encodeURIComponent(title)}`
-          + `&copyright=${encodeURIComponent(ctx.copyright || '')}`
+          + (seasonAny ? '&any=1' : `&copyright=${encodeURIComponent(ctx.copyright || '')}`)
       );
       if (myReq !== seasonReqId) return; // 期间换了剧，丢弃过期结果
       const seasons = (data && data.seasons) || [];
       if (!seasons.length) {
         // 有制作方时结果会被按制作方过滤，空态要说清原因，别让人以为是没搜到
         const maker = String((data && data.copyright) || '').trim();
-        body.innerHTML = maker
-          ? `<p class="muted season-empty">暂未找到「${esc(maker)}」制作的其他季。</p>`
-          : '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
+              if (seasonAny) {
+                body.innerHTML = '<p class="muted season-empty">不限制作方也暂未找到其他季，可稍后再查。</p>';
+              } else if (maker) {
+          body.innerHTML = `<p class="muted season-empty">暂未找到「${esc(maker)}」制作的其他季，`
+            + '可点「查找更多」忽略制作方再查。</p>';
+        } else {
+          body.innerHTML = '<p class="muted season-empty">暂未找到其他季，可稍后再查。</p>';
+        }
       } else {
         body.innerHTML = seasons.map((s) => {
           const label = s.season && s.season !== 1 ? `第 ${s.season} 季` : '第一季';
           const epNote = s.episode_cnt ? `共 ${s.episode_cnt} 集` : '';
+          // 不限制作方时，把各条目自己的制作方标出来，避免误点同名但无关的剧
+          const makerNote = seasonAny && s.copyright ? esc(s.copyright) : '';
+          const meta = [label, epNote, makerNote].filter(Boolean).join(' · ');
           return `<button class="season-item" data-sid="${esc(s.series_id)}" data-title="${esc(s.title)}"
             data-copyright="${esc(s.copyright || '')}"
             aria-label="播放《${esc(s.title)}》">
             ${posterBlockHtml(s.cover)}
             <div class="season-meta">
               <h4>${esc(s.title || '未命名')}</h4>
-              <p class="muted">${label}${epNote ? ' · ' + epNote : ''}</p>
+              <p class="muted">${meta}</p>
             </div>
             <span class="season-play">▶</span>
           </button>`;
@@ -2046,6 +2075,13 @@
   }
 
   $('pRelBtn').addEventListener('click', (e) => { e.stopPropagation(); toggleSeasonCard(); });
+  $('seasonMore').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!searchNameOf() || !ctx.seriesId) return;
+    seasonAny = !seasonAny; // 在「同制作方」与「不限制作方」之间切换
+    syncSeasonMoreBtn();
+    loadSeasons();
+  });
   $('seasonClose').addEventListener('click', (e) => { e.stopPropagation(); closeSeasonCard(); });
   document.addEventListener('click', (e) => {
     if (!seasonCard.hidden

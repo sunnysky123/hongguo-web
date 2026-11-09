@@ -156,7 +156,12 @@
       <!-- 关联剧集（其他季）卡片：点击「关联剧集」按钮展开，列表展示可切换的其他季 -->
       <div id="seasonCard" class="season-card" hidden>
         <div class="ep-card-head">
-          <span>其他季</span>
+          <div class="row-inline">
+            <span>其他季</span>
+            <!-- 查找更多：不限制作方再查一遍，点第二次恢复为只看同制作方 -->
+            <button id="seasonMore" class="season-more"
+                    title="不限制作方，查找该剧的其他季">查找更多</button>
+          </div>
           <button id="seasonClose" class="ep-card-x" title="关闭">✕</button>
         </div>
         <div id="seasonList" class="season-list"></div>

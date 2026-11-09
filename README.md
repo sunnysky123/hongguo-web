@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.2.7` 为例） |
+| 你的系统 | 下载的文件（`1.2.8` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.7-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.7-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.7-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.7-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.7-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.7-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.7-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.8-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.8-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.8-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.8-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.8-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.8-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.8-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.2.7-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.2.8-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.2.7-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.2.8-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -367,7 +367,7 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/filters?genre=short_play` | 筛选维度 |
 | GET | `/browse?genre=&theme=&sort=&days=` | 组合浏览 |
 | GET | `/episodes?series_id=` | 剧集列表（播放器「制作方」取自列表接口已有的 `copyright`，此处仅为透传兜底） |
-| GET | `/seasons?series_id=&title=&copyright=` | 关联剧集（其他季）；传 `copyright` 时仅保留与当前制作方一致的结果，不传或为空则不过滤 |
+| GET | `/seasons?series_id=&title=&copyright=&any=` | 关联剧集（其他季）；传 `copyright` 时仅保留与当前制作方一致的结果，不传或为空则不过滤；`any=1` 表示不限制作方（前端「查找更多」） |
 | POST | `/metrics/batch` | 批量上报播放进度 |
 | GET | `/play?series_id=&ep=1-10` | 取各集直链（`encrypted_url` 为上游直链，可播放用 `stream_url`） |
 | GET | `/video_url?vid=` | 单集取直链 |

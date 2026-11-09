@@ -514,7 +514,10 @@ class Server {
       // copyright 可选：当前剧制作方，传入后只保留制作方一致的其他季
       const copyright = q.copyright !== undefined && q.copyright !== null
         ? String(q.copyright).trim() : '';
-      Res.json(req, res, 200, await Client.findOtherSeasons(sid, title, copyright));
+      // any=1 表示不限制作方（前端「查找更多」用），此时忽略 copyright
+      const anyCopyright = Json.optBool(q.any, false);
+      Res.json(req, res, 200,
+        await Client.findOtherSeasons(sid, title, copyright, anyCopyright));
       return;
     }
 
