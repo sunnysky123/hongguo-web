@@ -885,9 +885,9 @@ function searchPageSlice() {
   check('null 结果不抛异常', p7.items.length === 0 && !p7.hasMore, '');
 }
 
-/** 19. App 取址链路：合成设备身份、python 风格 query 编码、URL 白名单。 */
+/** 19. App 取址链路：播放设备参数、python 风格 query 编码、URL 白名单。 */
 function appSource() {
-  section('19. App 取址链路：合成身份 / query 编码 / URL 白名单');
+  section('19. App 取址链路：播放设备参数 / query 编码 / URL 白名单');
 
   check('pyEncode: * 原样保留（resolution=1280*2772，签名按原文计算）',
     AppSource.pyEncode('1280*2772') === '1280*2772',
@@ -908,6 +908,33 @@ function appSource() {
     String(d.device_type) === '25053RT47C', '');
   check('设备身份: 基础参数不含 iid/device_id（播放身份由匿名注册提供）',
     d.iid === undefined && d.device_id === undefined, '');
+
+  const pd = AppSource.PLAYBACK_DEVICE;
+  check('播放设备参数: version_code=74332（2026-11-10 上游 6.6 请求格式）',
+    String(pd.version_code) === '74332', '');
+  check('播放设备参数: version_name=7.4.3.32（与 UA、签名内设备字段一致）',
+    String(pd.version_name) === '7.4.3.32', '');
+  check('播放设备参数: 版本族五字段全部同步为 74332',
+    String(pd.manifest_version_code) === '74332'
+    && String(pd.update_version_code) === '74332'
+    && String(pd.pv_player) === '74332', '');
+  check('播放设备参数: 其余字段继承 DEVICE_BASE',
+    String(pd.channel) === 'update_64' && String(pd.device_type) === '25053RT47C'
+    && pd.iid === undefined && pd.device_id === undefined, '');
+  check('播放 UA: 版本号同步为 74332 且机型段不变',
+    AppSource.PLAYBACK_UA.startsWith('com.phoenix.read/74332 ')
+    && AppSource.PLAYBACK_UA.indexOf('25053RT47C') > 0,
+    AppSource.PLAYBACK_UA);
+
+  const vt = AppSource.VIDEO_TAB_DEVICE;
+  check('video_tab 设备参数: 版本族为 73932 / 7.3.9.32（上游 6.7 恢复路径）',
+    String(vt.version_code) === '73932' && String(vt.version_name) === '7.3.9.32'
+    && String(vt.manifest_version_code) === '73932'
+    && String(vt.update_version_code) === '73932'
+    && String(vt.pv_player) === '73932', '');
+  check('video_tab 设备参数: 其余字段继承 DEVICE_BASE 且不含身份',
+    String(vt.channel) === 'update_64' && String(vt.device_type) === '25053RT47C'
+    && vt.iid === undefined && vt.device_id === undefined, '');
 
   try {
     const u = AppSource.checkedUrl('https://p3.qznovelvod.com/a/b.mp4', AppSource.VOD_DOMAINS);

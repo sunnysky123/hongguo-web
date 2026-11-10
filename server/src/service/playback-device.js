@@ -16,9 +16,15 @@
  * 身份只保留 device_id / iid / cdid，仅存进程内存；不保存设备令牌、
  * Cookie 或完整响应。
  *
- * 缓存策略：成功结果进程内永久复用（身份不变）；失败结果只复用
- * RETRY_COOLDOWN_MS，冷却期过后下次调用会重新注册 —— 否则开机时网络
- * 未就绪这类瞬时故障会让整个进程永久不可播放，只能重启。
+ * 两种取用模式（2026-11-10 起对齐上游 6.6）：
+ *  - 缓存模式 getPlaybackDevice()：成功结果进程内永久复用（身份不变）；
+ *    失败结果只复用 RETRY_COOLDOWN_MS，冷却期过后下次调用会重新注册
+ *    —— 否则开机时网络未就绪这类瞬时故障会让整个进程永久不可播放，
+ *    只能重启。
+ *  - fresh 模式 getPlaybackDevice({ fresh: true })：跳过缓存，每次注册
+ *    全新身份。播放身份视为一次性 —— 同一身份短时间内重复取流会被上游
+ *    判重返回空响应；注册失败后有 FRESH_RETRY_COOLDOWN_MS 的快速失败
+ *    窗口，避免连环取流把注册接口打爆（上游 registrationRetryAfter 同款）。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -33,18 +39,28 @@ const KDF_SALT = Buffer.from(
   '4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524'
   + 'f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58', 'hex');
 
-/** 注册 UA 的版本号与 body 的 version_code（73932 / 7.3.9.32）保持一致。 */
-const REGISTER_UA = 'com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; '
+/**
+ * 注册 UA：上游 6.6 用 72232（7.2.2.32）这一版；body 内的版本字段
+ * （73932 / 7.3.9.32）保持原抓包值不变。
+ */
+const REGISTER_UA = 'com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; '
   + 'Build/BP2A.250605.031.A3)';
 
 /** 注册失败后的重试冷却（毫秒）：冷却期内复用失败结果，避免每个请求都去打上游。 */
 const RETRY_COOLDOWN_MS = 60000;
+
+/** 全新注册失败后的快速失败窗口（毫秒）：窗口内直接抛上次失败，不连打注册接口。 */
+const FRESH_RETRY_COOLDOWN_MS = 10000;
 
 /** 当前注册结果（Promise）。成功后复用至主动失效；失败仅在冷却期内复用。 */
 let registration = null;
 
 /** 当前缓存的失败时间戳（毫秒）；0 表示缓存的是成功结果。 */
 let failedAt = 0;
+
+/** 最近一次注册失败（错误对象）与时刻，供 fresh 模式快速失败。 */
+let lastFailure = null;
+let lastFailureAt = 0;
 
 /** 取 *_str 优先、数字兜底，仅接受正整数形式的 ID。 */
 function responseId(response, name) {
@@ -91,19 +107,11 @@ function buildBody(now, cdid) {
 }
 
 /**
- * 注册匿名播放设备；成功后返回 Object.freeze({device_id, iid, cdid})。
- *
- * 成功结果进程内永久复用；失败结果只在 RETRY_COOLDOWN_MS 内复用，
- * 冷却结束后自动重新注册（无需重启应用）。
+ * 发起一次注册（不读缓存）。
+ * 成功清掉 fresh 模式的失败记录；失败记录最近失败，且仅当共享缓存仍指向
+ * 这次结果时标记失败时刻（避免被 reset 后的新注册覆盖）。
  */
-function getPlaybackDevice() {
-  if (registration !== null) {
-    if (failedAt === 0) return registration;
-    if (Date.now() - failedAt < RETRY_COOLDOWN_MS) return registration;
-    // 冷却结束：丢弃失败缓存，重新注册
-    registration = null;
-    failedAt = 0;
-  }
+function register() {
   const pending = (async () => {
     try {
       const now = Date.now();
@@ -144,10 +152,44 @@ function getPlaybackDevice() {
       });
     }
   })();
-  // 记录失败时刻（只标记「当前」这次，避免被 reset 后的新注册覆盖）
-  pending.catch(() => {
+  pending.then(() => {
+    lastFailure = null;
+    lastFailureAt = 0;
+  }, (e) => {
+    lastFailure = e;
+    lastFailureAt = Date.now();
     if (registration === pending) failedAt = Date.now();
   });
+  return pending;
+}
+
+/**
+ * 取匿名播放设备身份。
+ *
+ * - 默认（缓存模式）：成功结果进程内永久复用；失败结果只在 RETRY_COOLDOWN_MS
+ *   内复用，冷却结束后自动重新注册（无需重启应用）。
+ * - { fresh: true }：跳过缓存注册全新身份（播放身份一次性，上游 6.6 同款）。
+ *   注册刚失败过时在 FRESH_RETRY_COOLDOWN_MS 内直接抛上次失败，不连打注册
+ *   接口 —— 该行为与上游 registrationRetryAfter 一致。
+ *
+ * @param {{fresh?: boolean}} [opts] fresh 为 true 时每次全新注册
+ * @returns {Promise<{device_id, iid, cdid}>}
+ */
+function getPlaybackDevice(opts) {
+  if (opts !== null && opts !== undefined && opts.fresh === true) {
+    if (lastFailure !== null && Date.now() - lastFailureAt < FRESH_RETRY_COOLDOWN_MS) {
+      throw lastFailure;
+    }
+    return register();
+  }
+  if (registration !== null) {
+    if (failedAt === 0) return registration;
+    if (Date.now() - failedAt < RETRY_COOLDOWN_MS) return registration;
+    // 冷却结束：丢弃失败缓存，重新注册
+    registration = null;
+    failedAt = 0;
+  }
+  const pending = register();
   registration = pending;
   return pending;
 }
