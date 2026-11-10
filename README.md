@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.2.8` 为例） |
+| 你的系统 | 下载的文件（`1.2.9` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.8-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.8-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.8-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.8-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.8-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.8-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.8-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.9-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.9-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.9-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.9-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.9-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.9-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.9-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.2.8-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.2.9-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.2.8-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.2.9-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -770,21 +770,25 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 两个接口上游要求带签名，若请求未带或签名不被接受，上游返回 HTTP 200 + 空 body。
 本项目对这两个接口固定走本地签名，正常不会触发；若偶发出现，稍后重试即可。
 
-播放取址（b 域名 `multi_video_model/v1`）自 2026-11-02 起恢复**签名请求**：
-先由 `playback-device.js` 注册匿名设备，再用 device_id / iid 组装 query，
-末尾追加 `ts`（秒）与 `_rticket`（毫秒，递增到 `branchOf === 0` 为止），
-并带上六个签名头（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）。
-签名全部在本进程内算，没有外部依赖。
+播放取址（b 域名 `multi_video_model/v1`）自 2026-11-02 起恢复**签名请求**，
+2026-11-10 起对齐上游 6.6 的请求格式：先由 `playback-device.js` 注册匿名设备
+（播放身份视为一次性，每次取流注册全新身份），再用 device_id / iid / cdid
+组装 query，末尾追加 `ts`（秒）与 `_rticket`（毫秒，递增到 `branchOf === 0`
+为止），请求体 gzip 压缩，带正文摘要与六个签名头
+（x-ss-stub / x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa），
+播放专用客户端版本统一为 74332。签名全部在本进程内算，没有外部依赖。
 
-该接口返回空 body 时，基本是「同一设备身份短时间内重复取流」被判重
-（同一集隔几秒单发就能过，本机实测与签名、出口 IP 都无关）。此时会丢掉
-这一次的注册结果、重新注册，换新身份再打备用域 `api5-normal-hl.fqnovel.com`；
-两次都空才计入熔断。调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应。
-若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com` 的网络问题
-（DNS 解析、代理分流、防火墙），可用
+该接口返回空 body 时（上游 6.7 实测修复）：换全新身份后不再重复同一条
+POST（换备用域也照样空），改打**签名 GET** `video_tab/multi_video_model/v1/`
+（带 `Connection: close`），从 `data.video_model_data[vid].video_model`
+提取片源；两次都空才计入熔断。空响应的具体原因上游未公开，日志文案不给
+未经证实的归因。调试可开 `HG_APPSOURCE_DEBUG=1`
+看原始响应。若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com`
+的网络问题（DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
 看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
 排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
+恢复路径为同域 `video_tab/multi_video_model/v1`，
 其余为 `preload/v1`）。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
