@@ -322,6 +322,14 @@ function stopRunning() {
     }
   }
 
+  // 部分 Windows 环境禁止 PowerShell/CIM 读取命令行，即使服务由同一
+  // 账户启动也会失败。最后按配置端口找 LISTENING PID，并只接受
+  // 当前停止脚本所用的同一个 Node 可执行文件，避免误杀其它 Node 服务。
+  if (targets.length === 0 && process.platform === 'win32') {
+    const byPort = findWindowsPortProcess(Config.num('api.port', 8000));
+    if (byPort !== null) targets.push(byPort);
+  }
+
   if (targets.length === 0) {
     Log.info('没有找到正在运行的 API 进程。');
     return false;
@@ -333,6 +341,51 @@ function stopRunning() {
   // 给操作系统一点时间回收 socket，否则紧接着的端口检查仍会报占用
   sleepSync(1200);
   return true;
+}
+
+/** Windows：解析 netstat，返回指定端口的 LISTENING PID。 */
+function windowsListenerPid(port) {
+  try {
+    const r = spawnSync('netstat.exe', ['-ano', '-p', 'tcp'],
+      { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    if (r.status !== 0 || !r.stdout) return null;
+    const suffix = ':' + port;
+    for (const line of r.stdout.split(/\r?\n/)) {
+      const cols = line.trim().split(/\s+/);
+      if (cols.length < 5 || cols[3].toUpperCase() !== 'LISTENING') continue;
+      if (!cols[1].endsWith(suffix)) continue;
+      const pid = parseInt(cols[4], 10);
+      if (!Number.isNaN(pid) && pid > 0) return pid;
+    }
+  } catch (e) { /* 读取失败则不按端口杀进程 */ }
+  return null;
+}
+
+/**
+ * Windows：按端口定位本项目 Node 进程。
+ *
+ * 只依据 Get-Process 的路径与当前停止脚本的 process.execPath 比较，
+ * 不把端口上的任意进程都当作目标。
+ */
+function findWindowsPortProcess(port) {
+  const pid = windowsListenerPid(port);
+  if (pid === null) return null;
+  try {
+    const script = "$ProgressPreference='SilentlyContinue'; "
+      + "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+      + "(Get-Process -Id " + pid + " -ErrorAction Stop).Path";
+    const r = spawnSync('powershell.exe',
+      ['-NoProfile', '-NonInteractive', '-Command', script],
+      { encoding: 'utf8', windowsHide: true, timeout: 10000 });
+    if (r.status !== 0 || !r.stdout) return null;
+    const exe = r.stdout.trim();
+    if (path.resolve(exe).toLowerCase() !== path.resolve(process.execPath).toLowerCase()) {
+      return null;
+    }
+    return { pid, ppid: null, command: exe, commandLine: null };
+  } catch (e) {
+    return null;
+  }
 }
 
 /**
@@ -550,6 +603,35 @@ function listProcesses() {
         }
       }
     } catch (e) { /* 无 wmic：返回空表，宁可不杀 */ }
+
+    // Windows 11 已逐步移除 WMIC。若上面的读取没有结果，改用系统自带
+    // PowerShell/CIM 枚举同账户可读的进程；否则 --stop 会误报
+    // “未找到进程，但端口仍在监听”。
+    if (out.length === 0) {
+      try {
+        const script = "$ProgressPreference='SilentlyContinue'; "
+          + "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+          + "$p=Get-CimInstance Win32_Process | "
+          + "Select-Object ProcessId,ParentProcessId,ExecutablePath,CommandLine; "
+          + "ConvertTo-Json -InputObject @($p) -Compress -Depth 4";
+        const r = spawnSync('powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', script],
+          { encoding: 'utf8', windowsHide: true, timeout: 20000 });
+        if (r.status === 0 && r.stdout && r.stdout.trim() !== '') {
+          const rows = JSON.parse(r.stdout);
+          for (const row of Array.isArray(rows) ? rows : [rows]) {
+            const pid = Number(row.ProcessId);
+            if (!Number.isFinite(pid)) continue;
+            out.push({
+              pid,
+              ppid: Number(row.ParentProcessId),
+              command: row.ExecutablePath || '',
+              commandLine: row.CommandLine || null,
+            });
+          }
+        }
+      } catch (e) { /* 当前账户无法读取进程时，仍按“不要误杀”处理 */ }
+    }
     return out;
   }
 
