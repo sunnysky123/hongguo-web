@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.2.9` 为例） |
+| 你的系统 | 下载的文件（`1.3.0` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.9-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.9-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.9-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.9-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.9-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.9-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.9-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.0-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.0-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.0-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.0-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.0-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.0-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.0-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.2.9-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.3.0-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.2.9-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.3.0-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -542,12 +542,14 @@ node server/src/main.js --selftest
 | 18 | 搜索分页切片（skip 生效且 has_more 判据正确） |
 | 19 | App 取址链路：设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
 | 20 | CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
-
+| 21 | 关联剧集（其他季）关键词与制作方匹配 |
+| 22 | 制作方归一化匹配（空白 / 全角 / 大小写、缺字段不过滤） |
+| 23 | 播放签名 551 Argus / Ladon：Simon 与 protobuf 固定向量、四组独立 Argus 密文、Ladon 黄金向量、签名与最终 query / 实际 body 绑定、无正文不带 `x-ss-stub` |
 这些都是踩坑后固化的回归基线，用于判断算法实现是否被改坏。
 预期结尾输出：
 
 ```
-  结果：171/171 全部通过
+  结果：251/251 全部通过
 ```
 
 > 早期文档曾写作 162 / 165 项，是断言项数随迭代增长后未同步更新所致；
@@ -575,7 +577,8 @@ hongguo-web/
 │   │   ├── selftest.js        自检套件
 │   │   ├── mp4-fixture.js     自检用最小加密 mp4 夹具
 │   │   ├── core/
-│   │   │   ├── pure-sign.js   本地纯代码签名（六个请求头）
+│   │   │   ├── pure-sign.js   本地纯代码签名（列表/搜索等接口的六个请求头）
+│   │   │   ├── playback-sign.js 播放专用真实签名（551 Argus + Ladon）
 │   │   │   ├── spade.js       spade -> content key
 │   │   │   ├── mp4.js         BMFF 盒树 + CENC 解密 + 纯 JS 减壳（剥离信令）
 │   │   │   ├── device.js      本机稳定 device_id
@@ -583,7 +586,7 @@ hongguo-web/
 │   │   │   └── safeguards.js  风控 + 缓存 + 节流
 │   │   ├── service/
 │   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
-│   │   │   ├── app-source.js  App 取址链路（注册身份 + 六头签名 + 备用域重试）
+│   │   │   ├── app-source.js  App 取址链路（注册身份 + 播放签名 + 双路径恢复）
 │   │   │   ├── playback-device.js 匿名播放设备注册（ttEncrypt）
 │   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
 │   │   │   ├── download.js    剧集批量下载（任务管理 / 重试 / 落盘）
@@ -773,16 +776,22 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 播放取址（b 域名 `multi_video_model/v1`）自 2026-11-02 起恢复**签名请求**，
 2026-11-10 起对齐上游 6.6 的请求格式：先由 `playback-device.js` 注册匿名设备
 （播放身份视为一次性，每次取流注册全新身份），再用 device_id / iid / cdid
-组装 query，末尾追加 `ts`（秒）与 `_rticket`（毫秒，递增到 `branchOf === 0`
-为止），请求体 gzip 压缩，带正文摘要与六个签名头
-（x-ss-stub / x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa），
-播放专用客户端版本统一为 74332。签名全部在本进程内算，没有外部依赖。
+组装 query，末尾追加 `ts`（秒）与 `_rticket`（毫秒）。
 
-该接口返回空 body 时（上游 6.7 实测修复）：换全新身份后不再重复同一条
-POST（换备用域也照样空），改打**签名 GET** `video_tab/multi_video_model/v1/`
-（带 `Connection: close`），从 `data.video_model_data[vid].video_model`
-提取片源；两次都空才计入熔断。空响应的具体原因上游未公开，日志文案不给
-未经证实的归因。调试可开 `HG_APPSOURCE_DEBUG=1`
+**2026-11-11 起（对齐上游 6.9）播放签名换成真正的 551 Argus + Ladon**
+（`core/playback-sign.js`）：此前 `x-argus` / `x-ladon` 只是时间戳的 base64
+占位，上游收紧后这类请求一律返回 HTTP 200 + 空 body，换身份、换路径、换出口
+都没用。现在 `x-argus`（Simon + protobuf + AES）与 `x-ladon` 都按**最终 query
+原文与实际发送的 body** 计算，签名头绑定这条 URL，因此取流不跟随重定向。
+实测同一分集修复前 `PLAYBACK_EMPTY_RESPONSE`、修复后约 300ms 返回 25KB 完整
+模型；签名全部在本进程内算，没有外部依赖。
+
+请求顺序也随 6.9 调整：先打**签名 GET** `video_tab/multi_video_model/v1/`
+（无正文、无需 gzip），空 body 才用一次旧 POST `multi_video_model/v1`
+（gzip 正文，摘要与签名同源）；两次都空才计入熔断。整条链路（含匿名注册）
+共享一条节奏链：同一时刻只放行一个取流，两次之间至少间隔 1 秒，
+整剧预热 / 批量下载不会在瞬间打满上游。空响应的具体原因上游未公开，
+日志文案不给未经证实的归因。调试可开 `HG_APPSOURCE_DEBUG=1`
 看原始响应。若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com`
 的网络问题（DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
@@ -794,9 +803,9 @@ POST（换备用域也照样空），改打**签名 GET** `video_tab/multi_video
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
-取直链已统一改走 App 取址链路（`AppSource`：b 域名 `multi_video_model/v1`；
-片源内联在 `video_model.video_list` 时直接使用，否则跟随 `fallback_api`
-二次请求；媒体 URL 带 `key_seed` 时自动解密）。
+取直链已统一改走 App 取址链路（`AppSource`：b 域名 `video_tab` 签名 GET 为主、
+`multi_video_model/v1` 签名 POST 兜底；片源内联在 `video_model.video_list` 时
+直接使用，否则跟随 `fallback_api` 二次请求；媒体 URL 带 `key_seed` 时自动解密）。
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
@@ -949,7 +958,7 @@ A：不用填。收到 401 时前端会自动换新密钥并重新加载，卡�
 本项目的逆向分析思路与部分实现，参考自以下开源项目：
 
 - **[hongguo-desktop-releases](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases)** —— 桌面端版本，提供了本项目最初的分析起点与对照实现，感谢原作者的分享。
-- **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/pure-sign.js` 与 `service/web-source.js` 移植自此。
+- **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/pure-sign.js` 与 `service/web-source.js` 移植自此；播放专用签名（551 Argus + Ladon）移植自其 6.9 版本的 `src/native/playback-signature.js`（实现源自 N3urda/hongguoTV 与 ch6vip/fqapp，GPL-3.0-only），对应本项目 `core/playback-sign.js`。
 
 ---
 
