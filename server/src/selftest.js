@@ -2,7 +2,7 @@
 /**
  * 自检套件。
  *
- * 共 22 组算法与环境探测基线，全部用例不依赖网络与外部服务。
+ * 共 23 组算法与环境探测基线，全部用例不依赖网络与外部服务。
  *
  * 运行态适配层：
  *  - 环境变量注入                   ->  process.env
@@ -885,7 +885,6 @@ function searchPageSlice() {
   check('null 结果不抛异常', p7.items.length === 0 && !p7.hasMore, '');
 }
 
-/** 19. App 取址链路：播放设备参数、python 风格 query 编码、URL 白名单。 */
 function appSource() {
   section('19. App 取址链路：播放设备参数 / query 编码 / URL 白名单');
 
@@ -1381,6 +1380,93 @@ function copyrightMatch() {
     M('', '任意制作方') && M(null, '') && M(undefined, '任意'), '');
 }
 
+/** 23. 播放专用真实签名：551 Argus / Ladon（固定黄金向量，离线）。 */
+function playbackSign() {
+  section('23. 播放签名（551 Argus / Ladon）：固定向量与签名绑定');
+  const PlaySign = require('./core/playback-sign');
+
+  // Ladon：固定 4 字节随机量的黄金向量
+  check('Ladon: 固定随机量向量一致',
+    PlaySign.Ladon.encrypt(1700000000, 1611921764, 1967, Buffer.from('01020304', 'hex'))
+    === 'AQIDBKM7Y7bWnOIUXmTybD6/MpGbuge4sBwUJsyHVivhtMsH', '');
+
+  // Argus 摘要：无正文按 16 个零字节算，有正文按 stub 的 md5 算
+  check('Argus: 无正文 bodyHash 为 sm3(16 零字节) 前 6 字节',
+    PlaySign.Argus.bodyHash('').toString('hex') === '106e34a2b8c7',
+    PlaySign.Argus.bodyHash('').toString('hex'));
+  check('Argus: queryHash 为 sm3(query 原文) 前 6 字节',
+    PlaySign.Argus.queryHash('aid=1967&device_id=123').toString('hex') === '925b8d86b20f',
+    PlaySign.Argus.queryHash('aid=1967&device_id=123').toString('hex'));
+  check('Argus: body 摘要取 md5(stub) 的 sm3 前 6 字节',
+    PlaySign.Argus.bodyHash('ac3ef48caa08fa3ed5e025da69edc645').toString('hex') === '5048b6e949d0',
+    PlaySign.Argus.bodyHash('ac3ef48caa08fa3ed5e025da69edc645').toString('hex'));
+
+  // Simon：64 位运算必须全程 BigInt，否则轮密钥丢精度
+  const simonKey = [1111111111111111111n, 2222222222222222222n,
+    3333333333333333333n, 4444444444444444444n];
+  const simon = PlaySign.Simon.encrypt(1234567890123456789n, 9876543210987654321n, simonKey);
+  check('Simon: 分组加密向量一致',
+    simon[0] === 6071150433487837324n && simon[1] === 2027321285990159935n,
+    simon[0] + ',' + simon[1]);
+
+  // Argus 密文：四条独立黄金向量（字段、时间、device_id 各不相同）
+  const golden = [
+    ['aid=1967&device_id=dev_aaaaaaaa&iid=111', 1700000000, 659662259,
+      '8oHyrVYEy1xDCDlx64ko40qC6JC9VYY/ZkjJzEl50iSFDw8Yfph1hupLxfKrA9GswSEz0Yi4goA7OQ4u+H8ECdOaQDL4GduQ3LULSq9Q4iSEGbS3L6G24GXChtnmPr6n46M2PLlKpXvF7uE0lhH4yD+X69FpdM41gQwx5Y5U3NdwXFaxlqYFszyp7dlUE6BEBWqwDsiAH8Jk9TGKr/jfHt4fVmMc9zRyNRdGeV0x6aP//x7aV+8Po8a/9KK3UNG5KEpmIgzRT6NUttkBP9gRNUh3'],
+    ['aid=1967&device_id=X&iid=333', 1234567890, 554000487,
+      '8oEOCRTb0LQf+M+MsliYu4M9kBzAlzXvFgL/Ub198hyoBGxYfNXLAENmH+K/10JQ+Rbhm2zRxNtNv5wVd885xcb6C6F10zp/9jVeGHGz8plz8W3UXHHNrFKjJptjQElGDbyaVLSKt56+HfwO7ENYMfjVv/5PNi1upVciiHqyOPDDAtwi/fZkwBoU1kC7RolMOuedn4lCg/s0CjnNvxFT0QpF/K0yoW3Zpu30tkadIET7WbZ3+7KT3c1yAA6RKWI4mmw='],
+    ['aid=1967&device_id=test_device_id&iid=456&version_name=6.5.1.32', 1700000000, 420072733,
+      '8oHu8LnZm0OtJJIaSr1427D+yeH70h5aZTVjoSW7MfFi/hk1LhjTqsEEWYpwcHfK4/2SXuJxTtopRcPeHzVpeFpUD4B4yxEG7REejpCZ1OqeAaLsw/lMebwUjUHrUjnAZCKq0QyimnwdiTiYIsH3GfiK/xlPcFcARqwX7RkI1qnnWUgiJVDEacSm8yhBat6MvDVOa7+U2MgcLu7Q26pFzX8VX5F+ryP76ETs1nRGLmlhHkwyiKb6CETstvGQnJgocgZBNNvlHD2/P+4LWjFMvhNK'],
+  ];
+  for (const [query, ts, randField, want] of golden) {
+    const deviceId = new URLSearchParams(query).get('device_id');
+    check('Argus 密文向量: ' + deviceId,
+      PlaySign.Argus.sign(query, '', ts, 1967, 1611921764, deviceId, '', randField) === want, '');
+  }
+
+  // 签名与最终 query / 实际 body 绑定
+  const query = golden[2][0];
+  const fixed = { query, ts: 1700000000, randField: 420072733,
+    ladonRandom: Buffer.from('01020304', 'hex') };
+  const empty = PlaySign.signPlayer(Object.assign({ body: null }, fixed));
+  check('签名字段齐全（ticket / khronos / ladon / argus）',
+    ['x-ss-req-ticket', 'x-khronos', 'x-ladon', 'x-argus'].every((k) => empty[k] !== undefined), '');
+  check('x-ss-req-ticket 为秒级时间戳的毫秒值',
+    empty['x-ss-req-ticket'] === '1700000000000' && empty['x-khronos'] === '1700000000', '');
+  check('无正文不带 x-ss-stub',
+    empty['x-ss-stub'] === undefined, String(empty['x-ss-stub']));
+  check('空 Buffer 与 null 签名一致（无正文语义）',
+    JSON.stringify(PlaySign.signPlayer(Object.assign({ body: Buffer.alloc(0) }, fixed))) === JSON.stringify(empty), '');
+
+  const body = Buffer.from('{"x":1}');
+  const signed = PlaySign.signPlayer(Object.assign({ body }, fixed));
+  check('正文摘要对实际发送的 Buffer 计算',
+    signed['x-ss-stub'] === 'ac3ef48caa08fa3ed5e025da69edc645', String(signed['x-ss-stub']));
+  check('正文变化会改变 x-argus（摘要参与签名）',
+    signed['x-argus'] !== empty['x-argus'], '');
+  check('正文变化不影响 x-ladon（只绑时间与 aid）',
+    signed['x-ladon'] === empty['x-ladon'], '');
+  check('query 字节变化会改变 x-argus',
+    PlaySign.signPlayer({ query: query + '&extra=*', body, ts: 1700000000, randField: 420072733 })
+      ['x-argus'] !== PlaySign.signPlayer({ query: query + '&extra=%2A', body, ts: 1700000000, randField: 420072733 })
+      ['x-argus'], '');
+  check('时间戳变化会同时改变 x-argus 与 x-ladon',
+    PlaySign.signPlayer({ query, body, ts: 1700000001, randField: 420072733 })['x-argus']
+      !== signed['x-argus']
+    && PlaySign.signPlayer({ query, body, ts: 1700000001, randField: 420072733 })['x-ladon']
+      !== signed['x-ladon'], '');
+  check('iid 不进入 Argus 的 field16（installId 由调用方给空）',
+    signed['x-argus'] === PlaySign.Argus.sign(query, 'ac3ef48caa08fa3ed5e025da69edc645',
+      1700000000, 1967, 1611921764, 'test_device_id', '', 420072733), '');
+
+  // 播放请求必须走真实签名，不能退回占位头
+  check('播放签名导出 signPlayer',
+    typeof PlaySign.signPlayer === 'function', '');
+  check('播放取流节奏间隔已导出',
+    AppSource.PLAYBACK_INTERVAL_MS > 0, AppSource.PLAYBACK_INTERVAL_MS + 'ms');
+}
+
+/** 19. App 取址链路：播放设备参数、python 风格 query 编码、URL 白名单。 */
 // ==================== 入口 ====================
 
 async function run() {
@@ -1413,6 +1499,7 @@ async function run() {
     shareLink();
     seasonUtil();
     copyrightMatch();
+    playbackSign();
   } catch (e) {
     failed++;
     console.log('  ✗ 自检异常中断：' + e);
@@ -1427,6 +1514,7 @@ async function run() {
   console.log('  托管模式     ' + Client.MANAGED);
   console.log('  列表免签     ' + Client.SIGN_LIST);
   console.log('  签名方式     本地纯代码签名（PureSign）');
+  console.log('  播放签名     551 Argus + Ladon（PlaybackSign）');
   console.log('  转码         不转码（源流 H.264 / HEVC 直出）');
   console.log('  Node         ' + process.version);
 
