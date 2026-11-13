@@ -7,7 +7,6 @@
  */
 const Json = require('../util/json');
 const Config = require('../util/config');
-const Log = require('../util/log');
 const { sleep, LruCache } = require('../util/common');
 
 // ==================== 缓存 ====================
@@ -183,7 +182,6 @@ function checkResponse(j) {
 
 module.exports = {
   cacheKey, cacheGet, cacheSet, weigh, sweeperActive,
-  sleep, Throttle, throttle,
+  sleep, throttle,
   ApiError, RiskControlError, AuthExpiredError, UpstreamResponseError, checkResponse,
-  RISK_CODES, AUTH_CODES,
 };

@@ -1512,7 +1512,7 @@ async function run() {
   console.log('  设备身份     ' + Client.identity().source
     + '（device_id=' + Client.identity().deviceId + '）');
   console.log('  托管模式     ' + Client.MANAGED);
-  console.log('  列表免签     ' + Client.SIGN_LIST);
+  console.log('  列表签名     ' + (Client.SIGN_LIST ? '开启（上游 landpage 需签名，关闭会返回 0 字节）' : '关闭'));
   console.log('  签名方式     本地纯代码签名（PureSign）');
   console.log('  播放签名     551 Argus + Ladon（PlaybackSign）');
   console.log('  转码         不转码（源流 H.264 / HEVC 直出）');

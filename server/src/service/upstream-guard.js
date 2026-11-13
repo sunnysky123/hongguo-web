@@ -77,6 +77,19 @@ function acquire() {
   return true;
 }
 
+/**
+ * 释放探测位（不影响熔断状态）。
+ *
+ * 为什么必须有它：半开探测可能以「既不是成功、也不是空响应」结束 ——
+ * HTTP 403/429、超时、设备注册失败都会直接抛错，调用方既不会 reportOk
+ * 也不会 reportEmpty。若不复位 probing，此后 acquire() 永远返回 false，
+ * 整个进程再也取不到流，只能重启。调用方（app-source）在所有失败分支
+ * 都调用本函数；成功与空响应路径分别由 reportOk / reportEmpty 复位。
+ */
+function releaseProbe() {
+  probing = false;
+}
+
 /** 上报一次成功：退出熔断、清零计数，恢复时打一条 INFO。 */
 function reportOk() {
   if (openUntil !== 0) {
@@ -185,6 +198,6 @@ function reset() {
 }
 
 module.exports = {
-  acquire, reportOk, reportEmpty, warn, shouldRotateDevice, blockedMessage, state, reset,
-  FAIL_THRESHOLD, BASE_COOLDOWN_MS, MAX_COOLDOWN_MS, WARN_INTERVAL_MS, ROTATE_INTERVAL_MS,
+  acquire, releaseProbe, reportOk, reportEmpty, warn, shouldRotateDevice, blockedMessage,
+  state, reset,
 };

@@ -100,10 +100,9 @@ class LruCache {
   /** 当前条数。 */
   get size() { return this.map.size; }
 
-  /** 当前累计字节数。 */
-  get byteSize() { return this.bytes; }
-
-  /** 读取；未命中或已过期返回 null。命中会刷新 LRU 顺序。 */
+  /**
+   * 读取；未命中或已过期返回 null。命中会刷新 LRU 顺序。
+   */
   get(key, now = Date.now()) {
     const e = this.map.get(key);
     if (e === undefined) return null;
@@ -117,17 +116,6 @@ class LruCache {
     return e.val;
   }
 
-  /** 是否命中且未过期（不刷新 LRU 顺序）。 */
-  has(key, now = Date.now()) {
-    const e = this.map.get(key);
-    if (e === undefined) return false;
-    if (e.expire !== 0 && e.expire <= now) {
-      this._drop(key);
-      return false;
-    }
-    return true;
-  }
-
   /**
    * 写入。ttlSec <= 0 表示不缓存（保持原 safeguards 语义）。
    * @param {number} [ttlSec] 存活秒数，默认 0（不缓存）
@@ -138,30 +126,14 @@ class LruCache {
       this._drop(key);
       return;
     }
-    const weight = this.weigh(val);
-    if (weight > this.maxItemBytes) {
-      this._drop(key);
-      return;
-    }
-    this._drop(key);
-    this.map.set(key, { val, expire: Date.now() + ttlSec * 1000, weight });
-    this.bytes += weight;
-    this._trim();
+    this._put(key, val, Date.now() + ttlSec * 1000);
   }
 
   /**
    * 永久写入（无 TTL）。等价于 set(key, val, Infinity)——仅供不需要过期的缓存用。
    */
   setForever(key, val) {
-    const weight = this.weigh(val);
-    if (weight > this.maxItemBytes) {
-      this._drop(key);
-      return;
-    }
-    this._drop(key);
-    this.map.set(key, { val, expire: 0, weight });
-    this.bytes += weight;
-    this._trim();
+    this._put(key, val, 0);
   }
 
   /** 删除单条。 */
@@ -169,12 +141,6 @@ class LruCache {
     const had = this.map.has(key);
     this._drop(key);
     return had;
-  }
-
-  /** 清空。 */
-  clear() {
-    this.map.clear();
-    this.bytes = 0;
   }
 
   /** 清掉全部已过期条目；返回删除条数。 */
@@ -197,6 +163,15 @@ class LruCache {
     this.bytes -= e.weight;
   }
 
+  /** 计算权重、按上限拦截后写入，并同步累计字节数。 */
+  _put(key, val, expire) {
+    const weight = this.weigh(val);
+    this._drop(key);
+    if (weight > this.maxItemBytes) return;
+    this.map.set(key, { val, expire, weight });
+    this.bytes += weight;
+    this._trim();
+  }
   /** 裁剪到上限内：按 LRU 顺序从头淘汰。 */
   _trim() {
     while ((this.map.size > this.maxEntries || this.bytes > this.maxBytes)

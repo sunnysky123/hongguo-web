@@ -481,7 +481,7 @@ curl -X POST -H "x-api-key: <key>" -H "Content-Type: application/json" \
 | `HONGGUO_DOWNLOAD_CONCURRENCY` | `2` | 批量下载时的并发集数（1–8），调大可能拖慢播放 | `runtime.download.concurrency` |
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
-| `HG_SIGN_LIST` | 见代码 | 免签接口列表（一般不需改） | 无，仅环境变量 |
+| `HG_SIGN_LIST` | `1` | 列表接口是否签名。上游 landpage（`/latest`、`/browse`）未签名时返回 HTTP 200 + 0 字节，**请保持开启**；设为 `0` 会得到空列表 | 无，仅环境变量 |
 | `HG_OPEN_BROWSER` | 空（跟随配置） | 设为 `0` 时服务就绪后不自动打开浏览器 | `launcher.open_browser` |
 | `WEB_DIR` | `<项目根>/web` | 前端目录 | 无，仅环境变量 |
 

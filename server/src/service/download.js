@@ -359,12 +359,9 @@ async function retry(id, indexes) {
 }
 
 module.exports = {
-  downloadDir,
   start,
   retry,
   get,
-  runningOf,
   snapshot,
-  MAX_ATTEMPTS,
   MAX_RETRIES,
 };
