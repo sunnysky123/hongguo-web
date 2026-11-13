@@ -215,6 +215,4 @@ function pipeRange(res, file, start, end) {
 module.exports = {
   send, json, headers, fail,
   isStaticPath, serveStatic, streamFile,
-  // 以下为内部工具，导出便于自检/复用
-  MIME, FAVICON_SVG, extOf, normalizePosix,
 };

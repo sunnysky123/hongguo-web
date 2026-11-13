@@ -156,13 +156,6 @@ function paced(task) {
   return run;
 }
 
-/** 清空播放节奏链状态，仅测试使用。 */
-function resetPacing() {
-  playbackChain = Promise.resolve();
-  playbackReadyAt = 0;
-  playbackRejection = null;
-}
-
 /** 「只有 BVC2 片源」的稳定错误码，供调用方分支判断（不要靠文案匹配）。 */
 const ERR_BVC2_ONLY = 'BVC2_ONLY';
 
@@ -554,36 +547,43 @@ async function postPlaybackWithRetry(body, vid, identity) {
     throw blocked;
   }
 
-  // 第一跳 video_tab GET，空响应才用一次旧 POST
-  const attempts = [String(vid), ''];
-  let current = identity;
-  let last = null;
-  for (let i = 0; i < attempts.length; i += 1) {
-    try {
-      // 第二次尝试带 Connection: close（上游同款），不复用上一请求的连接
-      const j = await postPlayback(body, current, attempts[i], i > 0);
-      Guard.reportOk();
-      return j;
-    } catch (error) {
-      last = error;
-      // 签名生成失败、HTTP 5xx 这类不是「空响应」，换路径也没意义
-      if (error.code !== 'PLAYBACK_EMPTY_RESPONSE') throw error;
-      if (i + 1 < attempts.length) {
-        await Safeguards.sleep(300);
-        // 空响应时连身份一起换：播放身份视为一次性，被判重/被拒的身份没有
-        // 复用价值。注册失败就沿用原身份，让备用路径还有一次机会（上游同款）。
-        try {
-          current = await getPlaybackDevice({ fresh: true });
-        } catch (e) {
-          // 注册失败就沿用原身份，让备用路径还有一次机会
+  // acquire() 可能把状态推进到半开并占用唯一的探测位。只有 reportOk /
+  // reportEmpty 会释放它，而 HTTP 403/429、超时、注册失败等分支都是直接
+  // 抛错 —— 不在这里兜底释放，probing 会永久为 true，进程再也取不到流。
+  try {
+    // 第一跳 video_tab GET，空响应才用一次旧 POST
+    const attempts = [String(vid), ''];
+    let current = identity;
+    let last = null;
+    for (let i = 0; i < attempts.length; i += 1) {
+      try {
+        // 第二次尝试带 Connection: close（上游同款），不复用上一请求的连接
+        const j = await postPlayback(body, current, attempts[i], i > 0);
+        Guard.reportOk();
+        return j;
+      } catch (error) {
+        last = error;
+        // 签名生成失败、HTTP 5xx 这类不是「空响应」，换路径也没意义
+        if (error.code !== 'PLAYBACK_EMPTY_RESPONSE') throw error;
+        if (i + 1 < attempts.length) {
+          await Safeguards.sleep(300);
+          // 空响应时连身份一起换：播放身份视为一次性，被判重/被拒的身份没有
+          // 复用价值。注册失败就沿用原身份，让备用路径还有一次机会（上游同款）。
+          try {
+            current = await getPlaybackDevice({ fresh: true });
+          } catch (e) {
+            // 注册失败就沿用原身份，让备用路径还有一次机会
+          }
         }
       }
     }
+    Guard.reportEmpty();
+    throw last;
+  } finally {
+    // 幂等：reportOk / reportEmpty 已复位时这里不会带来副作用
+    Guard.releaseProbe();
   }
-  Guard.reportEmpty();
-  throw last;
 }
-
 /** fallback_api 的普通 GET：不带签名，只带 UA。 */
 async function getPlain(url) {
   const res = await Http.send({
@@ -807,13 +807,11 @@ function checkedUrl(value, domains) {
 module.exports = {
   fetch,
   resetPlaybackDevice,
-  resetPacing,
   DEVICE_BASE,
   PLAYBACK_DEVICE,
   VIDEO_TAB_DEVICE,
   PLAYBACK_UA,
   PLAYBACK_INTERVAL_MS,
-  CODEC_BYTEVC2,
   ERR_BVC2_ONLY,
   BVC2_ONLY_MSG,
   pyEncode,
@@ -822,9 +820,5 @@ module.exports = {
   decryptSpadeUrl,
   checkedUrl,
   VIDEO_API_HOST,
-  VIDEO_UA,
-  VERSION_NAME,
-  API_DOMAINS,
   VOD_DOMAINS,
-  URL_CONSTANTS,
 };

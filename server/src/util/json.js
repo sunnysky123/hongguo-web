@@ -129,8 +129,7 @@ function obj() { return {}; }
 function arr() { return []; }
 
 module.exports = {
-  JsonException,
-  parse, parseObject, stringify, stringifyPretty, typeName,
+  parse, parseObject, stringify, stringifyPretty,
   optObj, optArr, optStr, optLong, optInt, optDouble, optBool,
   obj, arr,
 };

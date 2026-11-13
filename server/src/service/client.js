@@ -83,9 +83,15 @@ const IDENTITY = Device.ensureDeviceId(BASE_QUERY);
 /** 桌面托管模式标志：存在则禁止刷新登录态、禁止降级容错。 */
 const MANAGED = Log.env('HONGGUO_SESSION_API_KEY', null) !== null;
 
-/** 仅 landpage/cell 系列列表接口免签（原 SIGN_LIST 语义）。 */
-const SIGN_LIST = ['1', 'true', 'yes', 'on'].includes(
-  Log.env('HG_SIGN_LIST', '').toLowerCase(),
+/**
+ * 仅 landpage/cell 系列列表接口是否需要签名（原 SIGN_LIST 语义）。
+ *
+ * 默认开启：2026-11 实测未签名的 landpage 请求稳定返回 HTTP 200 + 0 字节
+ * （上游已全面要求签名），即默认关闭时 /latest 与 /browse 恒为空列表。
+ * 设为 0/false/no/off 可显式关闭（仅供排障对照）。
+ */
+const SIGN_LIST = !['0', 'false', 'no', 'off'].includes(
+  Log.env('HG_SIGN_LIST', '1').toLowerCase(),
 );
 
 const _sessionHeaders = sessionHeaders();
@@ -917,30 +923,53 @@ class RankPage {
 /**
  * 取漫剧榜单的一页。
  *
- * offset 为 0 时行为与从前一致（从头累积抓够 limit 条）；offset>0 时只抓
- * 本页，不会从头重复遍历 —— 无限滚动必须走这条路径，否则每次触底都会把
- * 前面的页重跑一遍。
+ * 分页语义：`offset` 是「调用方已展示的条数」（skip），与 /latest、/browse、
+ * /search 一致；返回值 nextOffset = skip + 本页条数。
+ *
+ * 为什么不用上游的 offset 参数：实测 cell/change/v 的 offset 不生效 —— 传
+ * 0/1/10/20/1000 返回的都是同一批前 10 条（换 session_uuid 也一样），
+ * 早期实现据此做「offset 分页」，续页与首屏大面积重叠，前端去重后表现为
+ * 「加载更多点了没反应」。唯一可靠的手段是 `filter_ids`：把已展示的
+ * series_id 回传，上游会跳过它们继续给后续内容（实测连续 6 页 60 条零重复）。
+ *
+ * 续页要跳过前 skipN 条，只能从头多抓。为避免每点一次「加载更多」就把
+ * 上游从头翻一遍，累积结果与去重集合按榜单缓存 10 分钟，后续续页从上次
+ * 位置接着抓。
  */
 async function rankPage(board, limit, offsetArg) {
   const limit1 = Math.max(1, Math.min(limit <= 0 ? 30 : limit, 100));
-  const offset = Math.max(0, offsetArg);
-  // 分页视图按 offset 缓存，避免相邻页互相覆盖
-  const ck = Safeguards.cacheKey('rankp', board, limit1, offset);
+  const skipN = Math.max(0, offsetArg);
+  // 分页视图按 skip 缓存，避免相邻页互相覆盖
+  const ck = Safeguards.cacheKey('rankp', board, limit1, skipN);
   const cached = Safeguards.cacheGet(ck);
   if (Array.isArray(cached)) {
     if (cached.length === 3 && Array.isArray(cached[0])) {
       return new RankPage(cached[0], cached[1] === true,
-        Json.optInt(cached[2], offset));
+        Json.optInt(cached[2], skipN));
     }
   }
 
   const sub = RANK_BOARDS[board] !== undefined ? RANK_BOARDS[board] : board;
-  const results = [];
-  let cur = offset;
-  const sessionUuid = crypto.randomUUID();
-  let hasMore = false;
+  const want = skipN + limit1;
 
-  while (results.length < limit1) {
+  // 累积态：[已抓到的行, 已展示 id, 上游是否还有后续]
+  const ckAcc = Safeguards.cacheKey('rankacc', board);
+  const results = [];
+  const seen = new Set();
+  let hasMore = true;
+  const acc = Safeguards.cacheGet(ckAcc);
+  if (Array.isArray(acc) && acc.length === 3) {
+    for (const row of Json.optArr(acc[0])) results.push(row);
+    for (const id of Json.optArr(acc[1])) seen.add(String(id));
+    hasMore = acc[2] === true;
+  }
+
+  const sessionUuid = crypto.randomUUID();
+  for (let page = 0; page < 60; page++) {
+    // 攒够要交付的那一页（skip 之后的 limit 条）就停
+    if (results.length >= want) break;
+    if (page > 0 && !hasMore) break;
+
     const q = Json.obj();
     q.cell_id = COMIC_RANK_CELL;
     q.tab_type = '26';
@@ -950,15 +979,17 @@ async function rankPage(board, limit, offsetArg) {
     q.selected_items = 'comic_series_rank';
     q.sub_selected_items = sub;
     q.session_uuid = sessionUuid;
-    if (cur !== 0) q.offset = String(cur);
+    // 已展示的 id 回传即可拿到后续内容；超长时只带最近一段，避免 URL 过长
+    if (seen.size > 0) q.filter_ids = Array.from(seen).slice(-200).join(',');
 
     const j = await api('GET', '/reading/bookapi/bookmall/cell/change/v',
       null, q, 3, SIGN_LIST);
     const data = Json.optObj(j.data);
     const cv = data === null ? null : Json.optObj(data.cell_view);
     const cells = cv === null ? [] : Json.optArr(cv.cell_data);
-    if (cells.length === 0) break;
+    if (cells.length === 0) { hasMore = false; break; }
 
+    let added = 0;
     for (const itemObj of cells) {
       const item = Json.optObj(itemObj);
       if (item === null) continue;
@@ -971,11 +1002,15 @@ async function rankPage(board, limit, offsetArg) {
       let sid = v.series_id;
       if (sid === null || sid === undefined) sid = v.book_id;
       if (sid === null || sid === undefined) continue;
+      // 上游偶尔重复回传同一条，去重后再入列，否则前端会看到重复卡片
+      const id = String(sid);
+      if (seen.has(id)) continue;
+      seen.add(id);
 
       const row = Json.obj();
-      // 分页时 rank 接着上一页排，避免每页都从 1 开始
-      row.rank = offset + results.length + 1;
-      row.series_id = String(sid);
+      // rank 是全榜的绝对名次，累积列表从第 1 名开始排
+      row.rank = results.length + 1;
+      row.series_id = id;
       row.title = str(v, 'title');
       row.episode_cnt = num(v, 'episode_cnt');
       row.score = hasOwn(v, 'score') ? v.score : '';
@@ -986,22 +1021,22 @@ async function rankPage(board, limit, offsetArg) {
       row.tags = coverTags(v);
       row.abstract = strip(str(v, 'video_desc'), 50);
       results.push(row);
+      added++;
+      if (results.length >= want) break;
     }
     hasMore = cv !== null && Json.optBool(cv.has_more, false);
-    const adv = (cv !== null && cv.next_offset !== null && cv.next_offset !== undefined)
-      ? Json.optInt(cv.next_offset, cur + cells.length)
-      : cur + cells.length;
-    // 游标没前进说明上游在原地打转，再翻下去会无限重复同一页
-    if (adv <= cur) { hasMore = false; break; }
-    cur = adv;
-    if (!hasMore) break;
+    // 一条新内容都没拿到 => 上游在原地打转，再翻下去只会无限重复
+    if (added === 0) { hasMore = false; break; }
   }
 
-  const out = results.slice(0, Math.min(limit1, results.length));
-  // 结果放满说明可能还有后续页；否则上游已明确没有
+  Safeguards.cacheSet(ckAcc, [results.slice(), Array.from(seen), hasMore], 600);
+
+  // 丢掉前 skipN 条，只交付之后的那一页
+  const out = results.slice(skipN, skipN + limit1);
   const more = hasMore && out.length >= limit1;
-  Safeguards.cacheSet(ck, [out, more, cur], 1800);
-  return new RankPage(out, more, cur);
+  const next = skipN + out.length;
+  Safeguards.cacheSet(ck, [out, more, next], 1800);
+  return new RankPage(out, more, next);
 }
 
 /**
@@ -1087,12 +1122,18 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   const paged = skip > 0 || (seenIds !== null && seenIds !== undefined && seenIds.length > 0);
   if (!refresh && !paged) {
     const c = Safeguards.cacheGet(ck);
-    if (c !== null) return new Page(c, true, 0);
+    // 命中时 nextSkip 必须按本页条数推进：此前固定返回 0，会让调用方
+    // 带着 offset=0 再请求一次首屏（目前靠前端兜底，属隐性耦合）。
+    if (c !== null) return new Page(c, true, c.length);
   }
 
   const out = [];
   // 已看过的 id 沿用上游去重参数，续页才不会重复返回同一批
   const shown = seenIds !== null && seenIds !== undefined ? seenIds.slice() : [];
+  // 本地去重集合：上游的 filter_ids 只是「尽量跳过」，实测与 offset 同时
+  // 使用时仍会回传若干已展示条目。不在这里过滤，这些重复项会占掉本页
+  // 名额，前端去重后就表现为「这一页怎么只有几条」。
+  const seenSet = new Set(shown);
   // 关键：offset 必须从已展示条数起步，否则上游每次都回第一页，
   // 前端表现为「续页内容与首页完全相同」
   let offset = Math.max(0, skip);
@@ -1111,7 +1152,6 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
       const it = Json.optObj(itObj);
       if (it === null) continue;
       const sid = String(it.series_id);
-      shown.push(sid);
 
       const subs = [];
       for (const sObj of Json.optArr(it.sub_title_list)) {
@@ -1120,6 +1160,9 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
       }
       const isToday = subs.includes('今日上新');
       if (isToday) pageToday++;
+      if (seenSet.has(sid)) continue;   // 上游重复回传，跳过
+      shown.push(sid);
+      seenSet.add(sid);
       if (wantToday && !isToday) continue;
 
       const cats = parseCategories(it.category_schema);
@@ -1279,7 +1322,9 @@ async function browsePage(genre, opts, seenIds, skip) {
 
   const out = [];
   const shown = seenIds !== null && seenIds !== undefined ? seenIds.slice() : [];
-  // 与 latestPage 同理：offset 必须从已展示条数起步
+  // 与 latestPage 同理：本地去重，过滤上游重复回传的已展示条目
+  const seenSet = new Set(shown);
+  // offset 必须从已展示条数起步
   let offset = Math.max(0, skip);
   let hasMore = false;
 
@@ -1292,11 +1337,15 @@ async function browsePage(genre, opts, seenIds, skip) {
     const items = data === null ? [] : Json.optArr(data.video_data);
     if (items.length === 0) break;
 
+    let added = 0;
     for (const itObj of items) {
       const it = Json.optObj(itObj);
       if (it === null) continue;
       const sid = String(it.series_id);
+      if (seenSet.has(sid)) continue;   // 上游重复回传，跳过
       shown.push(sid);
+      seenSet.add(sid);
+      added++;
 
       const row = parseFeedRow(it, sid);
       row.category = parseCategories(it.category_schema).join(' / ');
@@ -1307,7 +1356,8 @@ async function browsePage(genre, opts, seenIds, skip) {
       out.push(row);
       if (out.length >= maxItems) break;
     }
-    // 上方 items.isEmpty() 已拦截 data == null，此处 data 必非空。
+    // 整页都是重复内容 => 游标没有实质前进，再翻只会打转
+    if (added === 0) break;
     // 上游只在下页无内容时才给出 has_more=false，故按其值决定是否继续。
     if (data.has_more === false) break;
     hasMore = true;

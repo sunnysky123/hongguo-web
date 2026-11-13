@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.3.0` 为例） |
+| 你的系统 | 下载的文件（`1.3.1` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.0-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.0-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.0-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.0-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.0-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.0-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.0-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.1-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.1-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.1-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.1-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.1-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.1-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.1-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.3.0-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.3.1-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.3.0-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.3.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -334,13 +334,21 @@ curl -H "x-api-key: <key>" "http://127.0.0.1:8000/download/task?id=<task_id>"
 
 | 接口 | 分页参数 | 说明 |
 |---|---|---|
-| `/rank` | `offset` | 偏移量，响应含 `has_more` 与 `next_offset` |
-| `/latest` | `offset` + `seen` | `seen` 为已取过的 series_id 逗号串，用于去重 |
-| `/browse` | `offset` + `seen` | 同上 |
-| `/search` | `offset` | 响应含 `has_more` 与 `next_offset` |
+| `/rank` | `offset` + `limit` | `offset` 为已展示条数；响应含 `has_more` 与 `next_offset`，`rank` 是全榜绝对名次 |
+| `/latest` | `offset` + `limit` + `seen` | `seen` 为已取过的 series_id 逗号串，用于去重 |
+| `/browse` | `offset` + `limit` + `seen` | 同上 |
+| `/search` | `offset` + `limit` | 响应含 `has_more` 与 `next_offset` |
 
-首屏不带分页参数时行为与从前一致。`seen` 只回传最近一段（前端取尾部
-若干条），因为上游 `filter_ids` 过长会显著增大请求体。
+首屏不带分页参数时行为与从前一致。`offset` 在四个接口里语义统一：
+**「已展示的条数」（skip）**，直接回传上一次的 `next_offset` 即可。
+
+> `/rank` 的 `offset` 与 `/latest`、`/browse` 不同，**不是**上游的偏移量参数：
+> 实测上游 `cell/change/v` 完全忽略 `offset`（传 0/1/10/20/1000 都返回同一批
+> 前 10 条），所以服务端改用 `filter_ids` 回传已展示 id 来续抓，并在进程内
+> 累积——这就是 `/rank` 续页偶尔要等一秒左右的原因。
+
+`seen` 只回传最近一段（前端取尾部若干条），因为上游 `filter_ids` 过长会
+显著增大请求体。`limit` 非法（如 `limit=abc`）时回落默认值，不报错。
 
 ---
 
@@ -358,8 +366,8 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/` | 服务与端点自述 |
 | GET | `/health` | 健康检查（含签名方式状态） |
 | GET | `/api-key` | 自动签发本地密钥（免鉴权） |
-| GET | `/search?q=&page=` | 搜索（本地签名，自动走官网/App 双通道） |
-| GET | `/search/page?q=&page=` | 同上，分页别名 |
+| GET | `/search?q=&offset=&limit=` | 搜索（本地签名，自动走官网/App 双通道）；`offset` 为已展示条数 |
+| GET | `/search/page?q=&offset=&limit=` | 同上，路径别名（参数完全一致） |
 | GET | `/share/resolve?text=` | **红果 App 分享文案/链接解析**（返回对应剧集 `series_id` 与分享所在集号） |
 | POST | `/share/resolve` | 同上，body `{ "text": "<整段分享文案>" }`（也接受 `url` / `link`） |
 | GET | `/rank?board=recommend\|hot\|new&limit=` | 榜单 |
@@ -481,15 +489,29 @@ curl -X POST -H "x-api-key: <key>" -H "Content-Type: application/json" \
 | `HONGGUO_DOWNLOAD_CONCURRENCY` | `2` | 批量下载时的并发集数（1–8），调大可能拖慢播放 | `runtime.download.concurrency` |
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
-| `HG_SIGN_LIST` | 见代码 | 免签接口列表（一般不需改） | 无，仅环境变量 |
+| `HG_SIGN_LIST` | `1` | 列表接口是否签名。上游 landpage（`/latest`、`/browse`）未签名时返回 HTTP 200 + 0 字节，**请保持开启**；设为 `0` 会得到空列表 | 无，仅环境变量 |
+| `HG_SEARCH_MAX_ITEMS` | `20` | 搜索单页默认条数（上限 40）；请求带 `limit` 时以 `limit` 为准 | 无，仅环境变量 |
+| `HG_DEVICE_ID` | 空（自动生成） | 固定本机 device_id（写入 `runtime.device_id`）。多实例同时跑时给每个实例不同值，可避免设备身份互撞 | `runtime.device_id`（另有直读的 `HONGGUO_DEVICE_ID`，优先级更高） |
+| `HONGGUO_CONFIG` | 空 | 指定配置文件路径，优先于默认的 `server/config/config.json` | 无，仅环境变量 |
+| `HG_MEM_CACHE_MAX` | `4096` | 内存缓存条目数上限 | `runtime.cache.mem_max` |
+| `HG_MEM_CACHE_MAX_MB` | `128` | 内存缓存总字节上限（MB） | `runtime.cache.mem_max_mb` |
+| `HG_IMG_CACHE_MAX_MB` | `64` | 图片缓存总字节上限（MB） | `runtime.cache.img_max_mb` |
+| `HG_IMG_MAX_KB` | `4096` | 单张图片缓存上限，**单位 KB**（默认 4096 = 4MB），超限不缓存 | `runtime.cache.img_max_kb` |
+| `HG_RATE_BUCKETS_MAX` | `4096` | 限流桶数量上限，超出后淘汰空闲桶 | `runtime.rate_buckets_max` |
+| `HG_RATE_BUCKET_IDLE_MS` | `600` | 限流桶空闲多久后回收，**单位秒**（默认 600 秒 = 10 分钟） | `runtime.rate_bucket_idle_ms` |
+| `HG_SWEEP_INTERVAL_MS` | `60` | 后台清扫（缓存/限流桶）间隔，**单位秒**（默认 60 秒） | `runtime.sweep_interval_ms` |
+| `HG_APPSOURCE_DEBUG` | 空 | 设为 `1` 打印 App 取址链路调试日志（定位取流/签名问题用） | 无，仅环境变量 |
 | `HG_OPEN_BROWSER` | 空（跟随配置） | 设为 `0` 时服务就绪后不自动打开浏览器 | `launcher.open_browser` |
 | `WEB_DIR` | `<项目根>/web` | 前端目录 | 无，仅环境变量 |
 
 > 「配置文件」列给出该环境变量在 `server/config/config.json` 里对应的键名，
-> 标「无，仅环境变量」的项没有配置文件入口。配置文件里还有一批表中未列出的
-> 运行时调优键——缓存 `mem_max` / `mem_max_mb` / `img_max_mb` / `img_max_kb`、
-> 限流桶 `rate_buckets_max` / `rate_bucket_idle_ms`、`sweep_interval_ms` 等，
-> 每项都带 `_xxx提示` 注释说明用途；环境变量用于临时覆盖，优先级更高。
+> 标「无，仅环境变量」的项没有配置文件入口。表已覆盖 `config.json` 的全部
+> 环境变量入口（`ENV_OF` 映射表），配置文件里其余键只带 `_xxx提示` 注释、
+> 没有对应环境变量。优先级：环境变量 > 配置文件。
+
+> 注意两处**单位不是毫秒**的历史命名：`HG_RATE_BUCKET_IDLE_MS` 与
+> `HG_SWEEP_INTERVAL_MS` 实际按**秒**解析（代码里再乘 1000），`HG_IMG_MAX_KB`
+> 按 KB。名字易误解，按此表为准。
 
 ### 输出与日志
 
@@ -518,7 +540,7 @@ start.bat > run.log 2>&1
 node server/src/main.js --selftest
 ```
 
-覆盖 21 组共 **173 项**断言：
+覆盖 24 组共 **251 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -542,9 +564,11 @@ node server/src/main.js --selftest
 | 18 | 搜索分页切片（skip 生效且 has_more 判据正确） |
 | 19 | App 取址链路：设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
 | 20 | CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
-| 21 | 关联剧集（其他季）关键词与制作方匹配 |
-| 22 | 制作方归一化匹配（空白 / 全角 / 大小写、缺字段不过滤） |
+| 21 | 分享链接解析：URL 提取、白名单主机校验、标题归一化与相似度打分 |
+| — | 季数解析（`第N季` / `第N部` / `（N）` / `Season N`、括号年份不误判、`titleScore`、关联关键词拼接） |
+| 22 | 制作方匹配（关联剧集过滤；空白 / 全角 / 大小写归一化、缺字段不过滤） |
 | 23 | 播放签名 551 Argus / Ladon：Simon 与 protobuf 固定向量、四组独立 Argus 密文、Ladon 黄金向量、签名与最终 query / 实际 body 绑定、无正文不带 `x-ss-stub` |
+
 这些都是踩坑后固化的回归基线，用于判断算法实现是否被改坏。
 预期结尾输出：
 
@@ -552,8 +576,9 @@ node server/src/main.js --selftest
   结果：251/251 全部通过
 ```
 
-> 早期文档曾写作 162 / 165 项，是断言项数随迭代增长后未同步更新所致；
-> 以 `--selftest` 实际输出的「通过/总数」为准。
+> 上表按 `section()` 的执行顺序排列；标 `—` 的一行是 `util/season` 段，
+> 紧跟组 21 之后、无编号，故组数（24）比编号段（23）多一个。
+> 断言项数会随迭代增长，**以 `--selftest` 实际输出的「通过/总数」为准**。
 
 自检不访问网络、不依赖任何外部服务，可在离线环境运行。
 
@@ -587,16 +612,20 @@ hongguo-web/
 │   │   ├── service/
 │   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
 │   │   │   ├── app-source.js  App 取址链路（注册身份 + 播放签名 + 双路径恢复）
+│   │   │   ├── upstream-guard.js 上游熔断器（连续空响应/失败时暂停取链）
 │   │   │   ├── playback-device.js 匿名播放设备注册（ttEncrypt）
 │   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
+│   │   │   ├── share-link.js  分享文案/链接解析（提取 series_id 与集号）
 │   │   │   ├── download.js    剧集批量下载（任务管理 / 重试 / 落盘）
 │   │   │   ├── stream.js      下载 + 解密 + remux
 │   │   │   └── res.js         响应辅助（JSON/静态/Range）
 │   │   └── util/
 │   │       ├── config.js      配置加载（JSON + 环境变量覆盖）
+│   │       ├── common.js      通用工具（LruCache / 路径 / 文本）
 │   │       ├── json.js        轻量 JSON
 │   │       ├── crypto.js      MD5 / AES-128-CTR / hex
 │   │       ├── http.js        HTTP 客户端封装（node:http/https）
+│   │       ├── season.js      季数解析与剧名相似度打分
 │   │       └── log.js         日志与配置读取
 │   ├── config/config.json     启动配置（端口、监听、调优参数、上游接口参数 upstream 段）
 │   ├── config/apikeys.json    链路密钥、管理口令与 device_id（首次启动自动生成，不入库）

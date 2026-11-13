@@ -1466,12 +1466,13 @@ function putU64(b, p, v) {
 }
 
 module.exports = {
-  ByteView, ByteArrayStore, RafStore, FileHeadReader,
-  Box, Track, Analysis, MoovSpan, DecryptResult,
-  parseBoxes, findBox,
-  analyzeEncryptedTracks, findMoov,
+  parseBoxes,
+  analyzeEncryptedTracks,
+  findMoov,
   ivToCounter, ctrCounter, counterFor,
   decryptTrack, trackBaseIvCandidates, avccSelfOk, pickProbeIndices, verifyVideoIv,
   stripEncryption,
   normalizeByteVc2,
+  ByteView, RafStore, FileHeadReader,
+  Track,
 };

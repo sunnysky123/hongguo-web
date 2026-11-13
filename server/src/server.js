@@ -340,10 +340,8 @@ class Server {
         Res.fail(req, res, 400, '缺少 q');
         return;
       }
-      const lim = q.limit;
-      const searchOff = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
-      const searchLimit = (lim === null || lim === undefined || lim === '')
-        ? 0 : Number.parseInt(lim, 10);
+      const searchOff = intParam(q, 'offset', 0);
+      const searchLimit = intParam(q, 'limit', 0);
       const m = Json.obj();
       m.query = query;
       // 首屏与续页走同一套逻辑，避免首屏拿不到 has_more 时前端只能乐观假设
@@ -359,21 +357,18 @@ class Server {
 
     if (method === 'GET' && pathname === '/rank') {
       const board = q.board !== undefined ? q.board : 'recommend';
-      const limit = Number.parseInt(q.limit !== undefined ? q.limit : '30', 10);
+      const limit = intParam(q, 'limit', 30);
       if (!Object.prototype.hasOwnProperty.call(Client.RANK_BOARDS, board)) {
         Res.fail(req, res, 400, 'board 必须是 ' + Object.keys(Client.RANK_BOARDS).join('|'));
         return;
       }
       // offset>0 走分页路径（供无限滚动）；缺省保持原行为，首屏不受影响
-      const offset = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
+      const offset = intParam(q, 'offset', 0);
       const m = Json.obj();
       m.board = board;
       m.name = Client.RANK_NAMES[board];
       if (offset > 0) {
-        const pg = await Client.rankPage(board, limit, offset);
-        m.items = pg.items;
-        m.has_more = pg.hasMore;
-        m.next_offset = pg.nextOffset;
+        pagedBody(m, await Client.rankPage(board, limit, offset));
       } else {
         m.items = await Client.rank(board, limit);
       }
@@ -388,7 +383,7 @@ class Server {
         return;
       }
       const onlyToday = q.only_today !== 'false';
-      const limit = Number.parseInt(q.limit !== undefined ? q.limit : '120', 10);
+      const limit = intParam(q, 'limit', 120);
       const refresh = q.refresh === 'true' || q.no_cache === 'true';
       const mode = genre === 'short_play'
         ? (onlyToday ? '今日上新' : '最新上架')
@@ -400,18 +395,10 @@ class Server {
       m.only_today = onlyToday;
       // offset>0 或带 seen 走分页路径；前端把已看过的 series_id 以逗号串回传，
       // 上游据此去重，因此续页内容不会与前面重复
-      const offset = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
-      const seenRaw = q.seen;
-      let seen = null;
-      if (seenRaw !== undefined && seenRaw !== null && seenRaw !== '') {
-        seen = seenRaw.split(',');
-      }
+      const offset = intParam(q, 'offset', 0);
+      const seen = seenParam(q);
       if (offset > 0 || seen !== null) {
-        const pg = await Client.latestPage(genre, onlyToday, limit, refresh, seen, offset);
-        m.count = pg.items.length;
-        m.items = pg.items;
-        m.has_more = pg.hasMore;
-        m.next_offset = pg.nextSkip;
+        pagedBody(m, await Client.latestPage(genre, onlyToday, limit, refresh, seen, offset));
       } else {
         const items = await Client.latest(genre, onlyToday, limit, refresh);
         m.count = items.length;
@@ -450,12 +437,8 @@ class Server {
       let items;
       let hasMore = false;
       let nextOffset = 0;
-      const offset = Number.parseInt(q.offset !== undefined ? q.offset : '0', 10);
-      const seenRaw = q.seen;
-      let seen = null;
-      if (seenRaw !== undefined && seenRaw !== null && seenRaw !== '') {
-        seen = seenRaw.split(',');
-      }
+      const offset = intParam(q, 'offset', 0);
+      const seen = seenParam(q);
       if (offset > 0 || seen !== null) {
         const pg = await Client.browsePage(genre, opts, seen, offset);
         items = pg.items;
@@ -523,13 +506,12 @@ class Server {
 
     if (method === 'POST' && pathname === '/metrics/batch') {
       const payload = await readJson(req);
-      let raw = Object.prototype.hasOwnProperty.call(payload, 'series_ids')
+      const raw = Object.prototype.hasOwnProperty.call(payload, 'series_ids')
         ? payload.series_ids : payload.series_id;
-      if (raw === undefined) raw = null;
       const ids = [];
       if (Array.isArray(raw)) {
         for (const o of raw) ids.push(String(o).trim());
-      } else {
+      } else if (raw !== undefined && raw !== null && raw !== '') {
         const sp = Http.splitCsv(String(raw));
         if (sp !== null) ids.push(...sp);
       }
@@ -683,13 +665,10 @@ class Server {
         try {
           t = await Download.start(sid, startEp, endEp);
         } catch (e) {
-          Res.fail(req, res, 400, String(e && e.message !== undefined ? e.message : e));
+          Res.fail(req, res, 400, errText(e));
           return;
         }
-        const m = Json.obj();
-        m.ok = true;
-        m.task = Download.snapshot(t);
-        Res.json(req, res, 200, m);
+        sendTask(req, res, t);
         return;
       }
       if (method === 'GET') {
@@ -699,45 +678,38 @@ class Server {
           Res.fail(req, res, 404, '任务不存在或已过期');
           return;
         }
-        const m = Json.obj();
-        m.ok = true;
-        m.task = Download.snapshot(t);
-        Res.json(req, res, 200, m);
+        sendTask(req, res, t);
         return;
       }
     }
 
-            // POST /download/task/retry  重试任务里失败的剧集：{id, indexes?}
-            //   indexes 省略 = 全部失败集；否则只重试给定的集号（必须都在失败列表里）。
-            // 在原任务上继续跑（id 不变），前端进度卡片无需换行；每集最多手动重试
-            // Download.MAX_RETRIES 次，防止无限重试。
-            if (pathname === '/download/task/retry') {
-              if (method !== 'POST') {
-                Res.fail(req, res, 405, '请用 POST');
-                return;
-              }
-              const payload = await readJson(req);
-              const id = payload.id !== undefined && payload.id !== null
-                ? String(payload.id).trim() : '';
-              if (id === '') {
-                Res.fail(req, res, 400, '缺少 id');
-                return;
-              }
-              let indexes = null;
-              if (Array.isArray(payload.indexes)) indexes = payload.indexes;
-              let t;
-              try {
-                t = await Download.retry(id, indexes);
-              } catch (e) {
-                Res.fail(req, res, 400, String(e && e.message !== undefined ? e.message : e));
-                return;
-              }
-              const m = Json.obj();
-              m.ok = true;
-              m.task = Download.snapshot(t);
-              Res.json(req, res, 200, m);
-              return;
-            }
+    // POST /download/task/retry  重试任务里失败的剧集：{id, indexes?}
+    //   indexes 省略 = 全部失败集；否则只重试给定的集号（必须都在失败列表里）。
+    // 在原任务上继续跑（id 不变），前端进度卡片无需换行；每集最多手动重试
+    // Download.MAX_RETRIES 次，防止无限重试。
+    if (pathname === '/download/task/retry') {
+      if (method !== 'POST') {
+        Res.fail(req, res, 405, '请用 POST');
+        return;
+      }
+      const payload = await readJson(req);
+      const id = payload.id !== undefined && payload.id !== null
+        ? String(payload.id).trim() : '';
+      if (id === '') {
+        Res.fail(req, res, 400, '缺少 id');
+        return;
+      }
+      const indexes = Array.isArray(payload.indexes) ? payload.indexes : null;
+      let t;
+      try {
+        t = await Download.retry(id, indexes);
+      } catch (e) {
+        Res.fail(req, res, 400, errText(e));
+        return;
+      }
+      sendTask(req, res, t);
+      return;
+    }
 
     if (method === 'GET' && pathname === '/stats') {
       if (!this.checkAdmin(req, q)) {
@@ -1020,6 +992,54 @@ function intOrNull(v) {
   if (v === undefined || v === null || v === '') return null;
   const n = Number.parseInt(String(v), 10);
   return Number.isNaN(n) ? null : n;
+}
+
+/**
+ * 解析可选的整数查询参数，非法值回落到默认值。
+ *
+ * 为什么不直接用 Number.parseInt：非法输入会得到 NaN，NaN 一路传进
+ * 分页/切片逻辑后循环条件恒假，接口静默返回 200 + 空列表 ——
+ * 「我传了参数却没数据」比 400 难排查得多。这里统一兜成默认值。
+ */
+function intParam(q, name, def) {
+  const raw = q[name];
+  if (raw === undefined || raw === null || raw === '') return def;
+  const n = Number.parseInt(String(raw), 10);
+  return Number.isNaN(n) ? def : n;
+}
+
+/** 解析重复使用的 `seen` 参数（逗号串）为 id 数组；缺省返回 null。 */
+function seenParam(q) {
+  const raw = q.seen;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const out = [];
+  for (const s of raw.split(',')) {
+    const t = s.trim();
+    if (t !== '') out.push(t);
+  }
+  return out.length > 0 ? out : null;
+}
+
+/** 分页响应体：统一带上 has_more / next_offset，避免各路由各写一套。 */
+function pagedBody(target, page) {
+  target.count = page.items.length;
+  target.items = page.items;
+  target.has_more = page.hasMore;
+  target.next_offset = page.nextSkip;
+  return target;
+}
+
+/** 取异常文案（用于 400 响应）。 */
+function errText(e) {
+  return String(e && e.message !== undefined ? e.message : e);
+}
+
+/** 下载任务响应体：{ok, task}。三处路由（创建 / 查询 / 重试）共用。 */
+function sendTask(req, res, t) {
+  const m = Json.obj();
+  m.ok = true;
+  m.task = Download.snapshot(t);
+  Res.json(req, res, 200, m);
 }
 
 module.exports = { Server };

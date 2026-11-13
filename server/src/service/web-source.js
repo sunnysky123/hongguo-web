@@ -242,10 +242,4 @@ function matchBracket(s, openIdx, open, close) {
 module.exports = {
   search,
   episodes,
-  fetchHtml,
-  pickJsonString,
-  normalizeVideoUrl,
-  matchBracket,
-  SITE_ORIGIN,
-  WEB_UA,
 };

@@ -132,19 +132,16 @@
 
     /**
      * 记录一次播放。同一部剧只保留一条，重复观看时把集数与时间戳更新后置顶。
-     * @param {boolean} atStart 是否是「进入时自动播放的第一集」
-     *        继续播放（从历史恢复）不更新时间戳，避免刷新列表就把旧记录顶上去。
+     * 列表顺序即最近使用顺序（unshift 置顶），时间戳仅作记录。
      */
-    touchHistory(item, atStart) {
+    touchHistory(item) {
       const sid = String(item.sid || '');
       if (!sid) return;
       const list = this.read('history').filter((x) => x.sid !== sid);
       list.unshift({
         sid, title: item.title || '未命名', cover: item.cover || '',
         ep: Number(item.ep) || 0, total: Number(item.total) || 0,
-        copyright: item.copyright || '',
-        at: atStart ? Date.now() : (Number(item.at) || Date.now()),
-        _t: Date.now(),
+        copyright: item.copyright || '', at: Date.now(),
       });
       this.write('history', list);
     },
@@ -526,6 +523,25 @@
     renderMoreCard();
   }
 
+  /**
+   * 首屏渲染后重置分页上下文并把 offset 推到已加载条数。
+   *
+   * 这两步必须一起做（详见 seedInf 注释），四处列表页（榜单 / 最新 / 筛选 /
+   * 搜索）此前各自抄了一遍，容易漏掉其中一步。可以顺带挂上续页函数与
+   * 「加载更多」卡片。
+   *
+   * @param {Array} items 首屏条目（用于登记 id 与推算 offset）
+   * @param {Function} [fetcher] 该列表的续页函数
+   */
+  function resetPaging(items, fetcher) {
+    resetInf();
+    seedInf(items);
+    if (typeof fetcher === 'function') {
+      inf.fetchPage = fetcher;
+      renderMoreCard();
+    }
+  }
+
   async function loadTab(tab) {
     state.tab = tab;
     state.items = [];
@@ -599,10 +615,7 @@
     setStatus(`${title || '榜单'} · ${state.items.length} 部`, 'ok');
     // 首屏请求不带 offset，拿不到 has_more：统一按「还有更多」处理，
     // 点一次加载后服务端才会给出真实的 has_more
-    resetInf();
-    seedInf(state.items);
-    inf.fetchPage = () => fetchRankMore(board, title);
-    renderMoreCard();
+    resetPaging(state.items, () => fetchRankMore(board, title));
   }
 
   /** 榜单续页：走 offset 分页路径，直接取上游下一段。 */
@@ -648,10 +661,7 @@
     });
     bindCards();
     setStatus(`${j.name || ''} ${j.mode || ''} · ${state.items.length} 部`, 'ok');
-    resetInf();
-    seedInf(state.items);
-    inf.fetchPage = () => fetchLatestMore(genre, onlyToday);
-    renderMoreCard();
+    resetPaging(state.items, () => fetchLatestMore(genre, onlyToday));
   }
 
   /** 最新上架续页：把已看过的 id 一起回传，上游据此去重。 */
@@ -815,11 +825,8 @@
         box.innerHTML = state.items.map(cardTemplate).join('');
         bindCards();
         setStatus(`浏览 · ${state.items.length} 部`, 'ok');
-        resetInf();
-        seedInf(state.items);
-        inf.hasMore = true;   // 首屏未带 offset，按还有更多处理
-        inf.fetchPage = () => fetchBrowseMore(buildQuery);
-        renderMoreCard();
+        // resetInf 已把 hasMore 置 true（首屏未带 offset，按还有更多处理）
+        resetPaging(state.items, () => fetchBrowseMore(buildQuery));
       } catch (e) { if (my === browseSeq) { box.innerHTML = ''; handleError(e); } }
     }
 
@@ -848,9 +855,6 @@
     seriesId: '', title: '', episodes: [], index: -1,
     cover: '', total: 0, // cover/total 供历史与收藏列表展示
     copyright: '', // 制作方：来自列表数据，随播放写入历史/收藏以便续播复用
-    // 「本次打开该剧后的首次起播」标记，供 recordHistory 判断是否刷新历史时间戳。
-    // 由 openSeries 置 true，playAt 消费后置回 false。
-    freshOpen: false,
     autoNext: localStorage.getItem('hg_autonext') !== '0',
   };
 
@@ -934,6 +938,44 @@
   let closeEpCard = () => {};
 
   /**
+   * 把贴附卡片定位到锚点按钮旁边。
+   *
+   * 四张卡片（简介/制作方气泡、选集、下载范围、其他季）此前各抄了一份
+   * 相同的「水平夹紧 + 上下翻转」逻辑，任何一处调整都要改四遍。
+   * 统一到这里：水平左缘对齐锚点并在视口内夹紧；垂直优先 prefer='down'
+   * 或 'up'，放不下就翻到另一侧，两侧都放不下则贴边。
+   *
+   * @param {HTMLElement} el     要定位的卡片（position: fixed）
+   * @param {HTMLElement} anchor 锚点按钮
+   * @param {object} [opts]
+   * @param {number} [opts.gap]  与锚点的间距，默认 8
+   * @param {'down'|'up'} [opts.prefer] 优先展开方向，默认 'down'
+   */
+  function placeAnchored(el, anchor, opts = {}) {
+    if (el.hidden) return;
+    const gap = opts.gap === undefined ? 8 : opts.gap;
+    const prefer = opts.prefer || 'down';
+    const b = anchor.getBoundingClientRect();
+    const w = el.offsetWidth;
+    const h = el.offsetHeight;
+
+    // 水平：左缘对齐锚点，右侧超出视口则左移，最后兜住左边界
+    let left = b.left;
+    if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+    if (left < 8) left = 8;
+
+    // 垂直：按偏好方向放置，放不下就翻到另一侧
+    let top = prefer === 'up' ? b.top - h - gap : b.bottom + gap;
+    if (top < 8 || top + h > window.innerHeight - 8) {
+      top = prefer === 'up' ? b.bottom + gap : b.top - h - gap;
+    }
+    if (top < 8) top = 8;
+
+    el.style.left = `${Math.round(left)}px`;
+    el.style.top = `${Math.round(top)}px`;
+  }
+
+  /**
    * 打开一部剧的播放器。
    * @param {string} seriesId
    * @param {string} title 卡片上的剧名（接口失败时兜底用）
@@ -978,8 +1020,6 @@
       syncRelBtn();
       syncDlBtn();
       updatePMeta();
-      // 标记本次打开：playAt 首次起播时会消费它（用于刷新历史时间戳并置顶）
-      ctx.freshOpen = true;
       const start = resolveStart(eps, opts);
       playAt(start);
     } catch (e) { handleError(e); }
@@ -1078,14 +1118,6 @@
   function recordHistory(pos, epObj) {
     if (!ctx.seriesId) return;
     const ep = (epObj && (epObj.index || pos + 1)) || pos + 1;
-    // 是否算「一次新的观看」：本次打开该剧后的首次起播。
-    //
-    // 不能用 pos === 0 判断 —— 从推荐/搜索点开一部看过的剧，现在会直接
-    // 续播到上次那一集（pos 可能是 11），那样就永远被判成「不是新观看」，
-    // 记录不会置顶，用户看不出自己刚点开过什么。用「打开会话内首次」判定：
-    // 续播也算新观看（置顶），而后续的连播/手动切集只更新集数不动顺序。
-    const fresh = ctx.freshOpen;
-    ctx.freshOpen = false;
     LIB.touchHistory({
       sid: ctx.seriesId,
       title: ctx.title,
@@ -1093,7 +1125,7 @@
       ep,
       total: ctx.total,
       copyright: ctx.copyright,
-    }, fresh);
+    });
     // 已收藏的剧同步更新收藏条目里的集数，避免收藏列表的进度长期停在收藏那一刻
     LIB.syncFavEp(ctx.seriesId, ep);
   }
@@ -1414,21 +1446,7 @@
     // 气泡是 position:fixed，需按按钮实时定位（fixed 脱离 overflow 裁剪）
     function place(btn, pop) {
       if (btn.hidden || pop.hidden) return;
-      const b = btn.getBoundingClientRect();
-      const gap = 6;
-      const w = pop.offsetWidth;
-      const h = pop.offsetHeight;
-      // 水平：以按钮为准，超出视口则夹紧
-      let left = b.left;
-      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
-      if (left < 8) left = 8;
-      // 优先放在按钮下方；空间不足则放上方
-      let top = b.bottom + gap;
-      if (top + h > window.innerHeight - 8) {
-        top = Math.max(8, b.top - h - gap);
-      }
-      pop.style.left = `${Math.round(left)}px`;
-      pop.style.top = `${Math.round(top)}px`;
+      placeAnchored(pop, btn, { gap: 6, prefer: 'down' });
     }
 
     function bind(btnId, popId) {
@@ -1496,21 +1514,7 @@
     const epCard = $('pEpCard');
 
     function placeEpCard() {
-      if (epCard.hidden) return;
-      const b = epBtn.getBoundingClientRect();
-      const gap = 8;
-      const w = epCard.offsetWidth;
-      const h = epCard.offsetHeight;
-      // 水平：与按钮左对齐，超出右边界则夹紧
-      let left = b.left;
-      if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
-      if (left < 8) left = 8;
-      // 垂直：默认向上（按钮在底部）；上方也放不下才向下
-      let top = b.top - h - gap;
-      if (top < 8) top = Math.min(window.innerHeight - h - 8, b.bottom + gap);
-      if (top < 8) top = 8;
-      epCard.style.left = `${Math.round(left)}px`;
-      epCard.style.top = `${Math.round(top)}px`;
+      placeAnchored(epCard, epBtn, { prefer: 'up' });
     }
 
     function openEpCard() {
@@ -1602,26 +1606,9 @@
     if (dlTimer !== null) { clearInterval(dlTimer); dlTimer = null; }
   }
 
-  /**
-   * 下载范围卡片定位：与选集卡片同款（fixed 贴附「下载」按钮，向上优先），
-   * 不全屏、无遮罩；按钮在播放器底部，向上展开才不会顶出视口。
-   */
+  /** 下载范围卡片定位：与选集卡片同款（fixed 贴附「下载」按钮，向上优先）。 */
   function placeDlCard() {
-    if (dlModal.hidden) return;
-    const b = $('pDlBtn').getBoundingClientRect();
-    const gap = 8;
-    const w = dlModal.offsetWidth;
-    const h = dlModal.offsetHeight;
-    // 水平：与按钮左对齐，超出右边界则夹紧
-    let left = b.left;
-    if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
-    if (left < 8) left = 8;
-    // 垂直：默认向上（按钮在底部）；上方也放不下才向下
-    let top = b.top - h - gap;
-    if (top < 8) top = Math.min(window.innerHeight - h - 8, b.bottom + gap);
-    if (top < 8) top = 8;
-    dlModal.style.left = `${Math.round(left)}px`;
-    dlModal.style.top = `${Math.round(top)}px`;
+    placeAnchored(dlModal, $('pDlBtn'), { prefer: 'up' });
   }
 
   /** 打开范围选择卡片；本剧已有任务在跑时，仅提示去顶栏查看进度。 */
@@ -1978,22 +1965,7 @@
   }
 
   function placeSeasonCard() {
-    if (seasonCard.hidden) return;
-    const b = $('pRelBtn').getBoundingClientRect();
-    const gap = 8;
-    const w = seasonCard.offsetWidth;
-    const h = seasonCard.offsetHeight;
-    // 水平：左缘对齐按钮左缘（与选集/下载卡片一致，避免伸出播放器左边框）；
-    // 右侧超出视口才左移夹紧
-    let left = b.left;
-    if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
-    if (left < 8) left = 8;
-    // 垂直：按钮在标题行（顶部），默认向下展开；下方放不下才向上
-    let top = b.bottom + gap;
-    if (top + h > window.innerHeight - 8) top = b.top - h - gap;
-    if (top < 8) top = 8;
-    seasonCard.style.left = Math.round(left) + 'px';
-    seasonCard.style.top = Math.round(top) + 'px';
+    placeAnchored(seasonCard, $('pRelBtn'), { prefer: 'down' });
   }
 
   function toggleSeasonCard() {
@@ -2251,7 +2223,6 @@
     ctx.cover = '';
     ctx.total = 0;
     ctx.copyright = '';
-    ctx.freshOpen = false;
     syncFavBtn();
     syncRelBtn();
     syncDlBtn();
@@ -2312,11 +2283,8 @@
           : '<div class="empty"><span class="big">🔍</span>没有找到相关剧集</div>'}`;
       bindCards();
       setStatus(`搜索完成 · ${items.length} 个结果`, 'ok');
-      resetInf();
-      seedInf(items);
-      inf.fetchPage = () => fetchSearchMore(q);
-      // 无结果时不挂卡片，网格也不存在
-      if (items.length) renderMoreCard();
+      // 无结果时不挂续页函数与「加载更多」卡片（网格本身也不存在）
+      resetPaging(items, items.length ? () => fetchSearchMore(q) : null);
     } catch (e) { handleError(e); }
   }
 
@@ -2330,6 +2298,19 @@
     const c = document.getElementById('searchCount');
     if (c) c.textContent = `${state.items.length} 个结果`;
     setStatus(`搜索完成 · ${state.items.length} 个结果`, 'ok');
+  }
+
+  /**
+   * 探活并更新状态栏。连接失败时抛出，由调用方决定如何提示。
+   * 修改 API 地址与启动流程共用，避免同一段 /health 解析写两遍。
+   */
+  async function reportHealth() {
+    const h = await api('/health');
+    const ready = (h.sign_backends || []).filter((b) => b.ready).length;
+    setStatus(ready
+      ? `服务正常 · 签名后端 ${ready} 个就绪`
+      : '服务正常 · 签名后端未就绪（列表类接口仍可用）', ready ? 'ok' : '');
+    return h;
   }
 
   // ---------- 错误处理 ----------
@@ -2490,11 +2471,7 @@
     renderApiInfo();
     setStatus('正在连接后端…');
     try {
-      const h = await api('/health');
-      const ready = (h.sign_backends || []).filter((b) => b.ready).length;
-      setStatus(ready
-        ? `服务正常 · 签名后端 ${ready} 个就绪`
-        : '服务正常 · 签名后端未就绪（列表类接口仍可用）', ready ? 'ok' : '');
+      await reportHealth();
       loadTab(state.tab);
     } catch (e) {
       handleError(e);
@@ -2618,11 +2595,7 @@
     // interactive=false 时 ensureKey 仍会启动退避重试，只是不改弹层文案。
     await ensureKey();
     try {
-      const h = await api('/health');
-      const ready = (h.sign_backends || []).filter((b) => b.ready).length;
-      setStatus(ready
-        ? `服务正常 · 签名后端 ${ready} 个就绪`
-        : '服务正常 · 签名后端未就绪（列表类接口仍可用）', ready ? 'ok' : '');
+      await reportHealth();
     } catch {
       setStatus('正在等待后端启动…', 'err');
       view.innerHTML = `<div class="empty"><span class="big">🔌</span>
