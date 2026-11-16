@@ -315,6 +315,17 @@ function branch2F13(iv, querySm3, bodyMd5, tsBytes, khronos) {
   return md5SumV3(input, countV2, orders, countV1);
 }
 
+/** hashF13 主分支的字表（VendorConstants.hashTable，v3 与 v5 共用）。 */
+const HASH_TABLE = [
+  0xebb64faf, 0x07aadcc2, 0xcf3187bf, 0xe01138ff, 0x6d0bfcff, 0x5a30a3be, 0xb41ad638, 0x34180eb8,
+  0xf233eb6f, 0xb1a584cc, 0xccc30dc7, 0x47d1db51, 0xd55653de, 0x70a84fa1, 0x57473c12, 0xf76f0288,
+  0x2c077f0a, 0xda0dcad0, 0xfbb86f6c, 0xfdc4cf00, 0x688a020d, 0xe676c6a6, 0x8cd6338b, 0x1a3c8d0e,
+  0xcce8b06b, 0x6ad0ed0b, 0xa0522717, 0xdc71ac83, 0x2285db71, 0xd5b4dda6, 0x736f8650, 0x6560306c,
+  0x617ce2a6, 0xe423417e, 0x0a40e143, 0x544e4032, 0x88dffb2a, 0x716c1ae0, 0x4c467a88, 0x05b23bb3,
+  0xe1d0b866, 0xbaa3dcb8, 0xae3374d3, 0xc3381a50, 0x1702f75b, 0xfe6da368, 0xf0b4cf48, 0x4e0ffbb8,
+  0x72aad10d, 0x26c53a3d, 0xf2bce0f6, 0xb4557581, 0x4a257fdd, 0x8c3182a2, 0xab0b3b86, 0x3d5dfb14,
+  0x4f103634, 0xd37b52d7, 0x444eff16, 0xeb0a33d1, 0x6ca86f6e, 0x0284ba7, 0x08387cfa, 0x5fb37586];
+
 /** hashF13：按 iv 低 4 位选分支（0 为主分支，1 不被服务端接受，2 为备用变体）。 */
 function hashF13(querySm3, bodyMd5, tsBytes, khronos) {
   const iv = getIv(getIv(getIv(0x20230928, querySm3), bodyMd5), tsBytes);
@@ -331,17 +342,8 @@ function hashF13(querySm3, bodyMd5, tsBytes, khronos) {
   const ivV1 = ivV1List[ivV0] | 0;
   const countV1 = (ivV1 + khronos + 1) & 255;
   const countV2 = (ivV1 + khronos) | 0;
-  const tt02 = [
-    0xebb64faf, 0x07aadcc2, 0xcf3187bf, 0xe01138ff, 0x6d0bfcff, 0x5a30a3be, 0xb41ad638, 0x34180eb8,
-    0xf233eb6f, 0xb1a584cc, 0xccc30dc7, 0x47d1db51, 0xd55653de, 0x70a84fa1, 0x57473c12, 0xf76f0288,
-    0x2c077f0a, 0xda0dcad0, 0xfbb86f6c, 0xfdc4cf00, 0x688a020d, 0xe676c6a6, 0x8cd6338b, 0x1a3c8d0e,
-    0xcce8b06b, 0x6ad0ed0b, 0xa0522717, 0xdc71ac83, 0x2285db71, 0xd5b4dda6, 0x736f8650, 0x6560306c,
-    0x617ce2a6, 0xe423417e, 0x0a40e143, 0x544e4032, 0x88dffb2a, 0x716c1ae0, 0x4c467a88, 0x05b23bb3,
-    0xe1d0b866, 0xbaa3dcb8, 0xae3374d3, 0xc3381a50, 0x1702f75b, 0xfe6da368, 0xf0b4cf48, 0x4e0ffbb8,
-    0x72aad10d, 0x26c53a3d, 0xf2bce0f6, 0xb4557581, 0x4a257fdd, 0x8c3182a2, 0xab0b3b86, 0x3d5dfb14,
-    0x4f103634, 0xd37b52d7, 0x444eff16, 0xeb0a33d1, 0x6ca86f6e, 0x0284ba7, 0x08387cfa, 0x5fb37586];
-  const tt = new Array(tt02.length);
-  for (let i = 0; i < tt.length; i++) tt[i] = ror(tt02[i], countV1);
+  const tt = new Array(HASH_TABLE.length);
+  for (let i = 0; i < tt.length; i++) tt[i] = ror(HASH_TABLE[i], countV1);
   const n0 = (countV2 + 2) & 7;
   const seed = [0xfa, 0x45, 0x61, 0xd7];
   // JS: Buffer.from(seed.map(...)) —— seed 仅 4 个元素，pad 为 4 字节
@@ -445,9 +447,57 @@ function xGorgon(query, body, timestamp, random) {
 
 // ==================== AesV3（medusa 内置的 AES 变体） ====================
 
-const SBOX = Buffer.from(
+const SBOX_V3 = Buffer.from(
   '+n0Ia5xZs0sEXznQOEqRmQBnpiCf9U2Ccybu3xhmgzOAAxn72f6uqqmwUsYL83klTni0NqxdGieeiNu9PGPsSRXBMB/cuFbUbM3KCUPINaPvHvSW0vwOcnuUhNHqRVpiAj/TEoE0K91+5ijypUYTATsh9mE3KSoN7Yyvv51cuyR2D3XkU4nhmI2xmmVwT1RMWKtub4sjxAcRDLrPoKSO2AU9FLLadMPX577Wf95IFj6FkKFVt3dCIsmGUC4X+WQxLJvxbRxEaOPpqJOXyzJX6+Vxaq3AzMfF/WAdoi1Hp+JRaV56zgpBtpWP97mH4DoGEIq1+FvV8LyS/3wvwugbQOwb2r26mJEMsiuDQTRn+wrYdrVGBVlhI3WQhyrjUBVMrLF5667llUcEaPCGPVGLD8qO5LlO8hKCvA7V9+8oJc9bXelqVQLhM76T5/WtnT45JKji+hdX0HoNCDDWuKON/QeaxB5uImSX0h2wv0VmP2zd2yeApxHcpsVS+MC2yFwAc2B7oBkTqsk1SEvTpM2fmfMQREBUfin0Bh+iq6EvPPavhWI2IX9e3yAas7Tm/3KEj2UmlFp36kN4x0rMLBRrxuh0U/zUHM4xcAMYjJY4MonxOl/X+alpt2M3WMI7w3HLnpIBigtNiJu7T21v4P6lSd5WFgntnMEt7oF92XzRLkJbTcGmXepE/UVOG6E/0YnhfS+q26utWcuxzpooyeD2cDlK1/8w9d28VzsRjbLuALbmGlp8+d7EzS6Au7lMpZ+ECMZvQmzwJ+eLOpxR+2chdUExp8ogQyq3v9l68rX4jCwjg0+PYKAEEzcU4wHFY2ZcdIHfWL1okD3SszT0GZMyKdZJrg1L2AeerB4tC0C4crp2EHGo5FYdSP7lwkeR2ocmnR+Ia8CYviUJlzOjhRZef9xuVOn3qcjow3fQgivsAmKKkg4+sA8F8/GWeDiGNhg8JM8KtFPMYWWkx5TVFX5t73kiNRJqjlIGVXtGZFCV4gzt0xcDopuZ6xz8r9Rzafpf9ywev8jh8592gHFIqpStZPuJxmDDMrNN0uBE3V+oscdoIzTJbRJ/t+sVvqnReJOgDJKk10fjisJwqyZBmnmn2BSFj8BvVtCMEbkuPOKdzw7eA11GPs04Qw8zWtkaZWwiO/wwpojqN6K0jY5RnNZA7vn4hPSul+nKCkVnVwQvg1zVxcSCtqORmB9KrJaBbssbCQivGJVJfVTt+hYxOtq4ZvWl8f4QAQZ0zGPffCgl9s6yT4vlvIdpu4YhBwA25wtQWZsc6GJYGWHyvSdeuh3mmUI9DSq13Fsp8C1MU3tqc04/df9LoTUXVXI5INOw/e8C7Hd+5CvbkMEFnnrUUmskEw==',
   'base64');
+
+// ==================== v5 播放签名常量（Android v04.10.03 Medusa/Helios/Khronos） ====================
+// 来源：N3urda/hongguoTV V5Constants（GPL-3.0-only）。协议常量，非账号凭据。
+
+/** v5 medusa 的 magic16（消息 field 1 与最终前缀）。 */
+const V5_MAGIC = Crypto.unhex('2d4b4fca49750d433fb5ae2c226dcc56');
+
+/** v5 helios / medusa 的版权方标识。 */
+const V5_LICENSE = '646637794';
+
+/** v5 medusa 的签名密钥（32 字节）。 */
+const V5_SIGN_KEY = Crypto.unhex(
+  'b23c2a470a20d105dc3f8c4438f8272ed46d6c89ffdcdedd5108698d26e9489d');
+
+/** v5 AesV3 的 4 段 S 盒（每段 256 字节）。 */
+const V5_SBOX = Crypto.unhex(
+  '53290fe9e51f316f90f74a7e034d367784ab49237cd0135cdc632c322fd3be0e'
+  + '2624a417ecd9151a7ff64f60730a87f9445ec6ada2f865d22b696c4188f24c0d'
+  + 'f37b75510b939f6bc2fe6883e68bc8c722181ba0bdb08c9871b50c9a16b46ee'
+  + 'a8eed20ba4b8a14e0fcf1468dbbef05a93e5a9d7dcf06898635c1fd99f5de287a'
+  + '80c594daaab19b6279fbd75070cb52eb2555c456e39e7839853874e2f0013ac0'
+  + 'b64742d8ca10e4b79c955de8b843ce4ed464a6a72ed508091c92e7b3eedd1e1d'
+  + 'd12afac321618fa3d65f9167c982f43d66a53c6a1997585b346dbf9672ff37cd'
+  + 'bc073b2dae11453304df00815476b2a13fccdb30b957a8acafe1274002485912'
+  + '38922563e36406d37a24100b7902a028044e218453c2a399199c9d13dc40c55b'
+  + 'a67e502273850ebdc1a2e2188b8f2d9e3cb909b8c46a2a9f4a6dd93007eafa65'
+  + 'b7b3a881aa908cc74f0ad76bbbb58617c37012ca05a469fd44e62eecf1e4272c'
+  + 'e860c0ae5eadf99b20d8f0234174006f3f110d7657d01645d4eff8f71471cbfe'
+  + '1cb2f52648727bf3c9de55153e031b4d61757db63dbf7782eeafe9018a889136'
+  + '2fb14759ac32bab03b349aeb5a377c5156be4c8dfbe13a684bda39cf836697c8'
+  + '94545fe0f2491acea9fc6252f4ff1e0fe72bd2df6e67a7f635e5bcc6d1a5dd95'
+  + '1d89960887a18eb40c785cdb1f80ed42299333ab98cdd67f316cd54346585dcc'
+  + 'd759fb722789b08807cc0fda293f7e5e1819bb0353517020b31d3d00374952be'
+  + 'a2c421e862040a9ec892a05b266b7a0d0cc316f483b81af39715657ffe32ad8d'
+  + 'e0c13077646035236ee5363e5f900e9a7cf850a81cd9960b6df73317226f99ea'
+  + 'a6fff15cec34acb98246639b918ab2851466a7cdfc4ad1b52c2ae95a58d3734e'
+  + '47ddd5b7560193f644ef9c408b7dee39b4d6aabf4de761e3252d4c7ba3843187'
+  + '745d55e6a5db05d42b45caed43c0c5d0b64bfa9d94a4a9d8f2f0e1a108dcfd28'
+  + '8fd2bc1fc7bd675412138169cb09249875ba3b68cfb11180afae104fc9789571'
+  + 'c6dfce02413886796ae21e3c488cc21b9f423a066c2eabf98e2fdeeb5776e4f5'
+  + 'd09a515ba58cbbab3e37b09fd4f6d9244df80512e84cd7956be301cf64f1429d'
+  + '58577cc241f3a2c655144f81aaf95a4e108da894b38970561ae9002619fbbac9'
+  + '1fa922ed202bfc62cb08e0de2a7f3631435f8b47c8a3c563b4db4071ce74c46d'
+  + 'a6fa696a9e282d1e825d663b93bfd56c48dce1884bb10fccea063929f746443f'
+  + 'd830a4232e53da21a1f2d1bdfebc3a02c10a1b8ad31d04fd616590d272ac737e'
+  + '98eb33af60528716bee78ec0ee8699031177277d9cff32542c67caf5f4459168'
+  + '1335ae0e178f3409a7803db83892dde5b9b7f0c750e24aef077badd678a09b85'
+  + '0b84ec1597e4963cb5e675df1c0d6fb618496ecd76c35c798325590c2fb27a5e');
 
 /** JS 语义：越界读返回 0（undefined 在位运算中等价于 0）。 */
 function aesSrc(data, idx) {
@@ -492,18 +542,33 @@ function aesMix(rows) {
 
 /** AES 变体：S 盒按 khronos 选段、行/列换用查表、密钥扩展 12 组。 */
 class AesV3 {
-  constructor(key, khronos) {
+  constructor(key, khronos, v5) {
+    const isV5 = v5 === true;
     this.wordSize = khronos & 3;
-    this.box = SBOX.subarray(this.wordSize * 256, (this.wordSize + 1) * 256);
-    const con2Table = [[1, 0, 2, 3], [2, 0, 3, 1], [0, 1, 3, 2], [1, 0, 2, 3]];
-    const orderTable = [
-      [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3],
-      [0, 9, 14, 15, 4, 13, 2, 7, 8, 1, 6, 3, 12, 5, 10, 11],
-      [0, 9, 14, 7, 4, 13, 2, 11, 8, 1, 6, 3, 12, 5, 10, 15],
-      [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3]];
+    this.box = (isV5 ? V5_SBOX : SBOX_V3)
+      .subarray(this.wordSize * 256, (this.wordSize + 1) * 256);
+    const con2Table = isV5
+      ? [[2, 0, 3, 1], [1, 3, 2, 0], [3, 2, 1, 0], [2, 3, 1, 0]]
+      : [[1, 0, 2, 3], [2, 0, 3, 1], [0, 1, 3, 2], [1, 0, 2, 3]];
+    const orderTable = isV5
+      ? [
+        [0, 9, 14, 15, 4, 13, 2, 7, 8, 1, 6, 3, 12, 5, 10, 11],
+        [0, 9, 14, 11, 4, 13, 2, 3, 8, 1, 6, 15, 12, 5, 10, 7],
+        [0, 9, 14, 3, 4, 13, 2, 15, 8, 1, 6, 11, 12, 5, 10, 7],
+        [0, 9, 14, 15, 4, 13, 2, 3, 8, 1, 6, 11, 12, 5, 10, 7]]
+      : [
+        [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3],
+        [0, 9, 14, 15, 4, 13, 2, 7, 8, 1, 6, 3, 12, 5, 10, 11],
+        [0, 9, 14, 7, 4, 13, 2, 11, 8, 1, 6, 3, 12, 5, 10, 15],
+        [0, 9, 14, 11, 4, 13, 2, 7, 8, 1, 6, 15, 12, 5, 10, 3]];
     this.con2 = con2Table[this.wordSize];
     this.order = orderTable[this.wordSize];
-    const init = [0xca025ddc, 0x823dc546, 0xc9420583, 0xc298225f][this.wordSize];
+    // wire/compact：明文 32 字节与源数据 248 字节之间的位抽吸映射（v5 与 v3 不同）。
+    this.wire = isV5 ? [6, 5, 3, 4, 2, 7, 1, 0] : [5, 6, 2, 4, 3, 1, 0, 7];
+    this.compact = isV5 ? [1, 7, 3, 6, 2, 0, 4, 5] : [1, 6, 0, 7, 2, 4, 5, 3];
+    const init = (isV5
+      ? [0xbbb5de72, 0xd4638d5b, 0x92a5f73b, 0x89f8a1c9]
+      : [0xca025ddc, 0x823dc546, 0xc9420583, 0xc298225f])[this.wordSize];
     const initial = Buffer.alloc(16);
     for (let i = 0; i < 4; i++) putLe32(initial, i * 4, init);
     const mk = xorBytes(initial, key);
@@ -592,17 +657,16 @@ class AesV3 {
 
   /** 加密：明文具化到 32 字节 -> CBC 两轮 -> 按 key 逐位回填源数据，末尾缀 key 末字节。 */
   encrypt(data, iv) {
+    const wire = this.wire;
+    const compact = this.compact;
     const plaintext = Buffer.alloc(32);
     for (let i = 0; i < 31; i++) {
       const at = i * 8;
-      const n0 = (aesSrc(data, at) >> 4) & 2;
-      const n1 = n0 | (aesSrc(data, at + 1) & 64);
-      const n2 = n1 | ((aesSrc(data, at + 2) >> 2) & 1);
-      const n3 = n2 | ((aesSrc(data, at + 3) << 3) & 128);
-      const n4 = n3 | ((aesSrc(data, at + 4) >> 1) & 4);
-      const n5 = n4 | ((aesSrc(data, at + 5) << 3) & 16);
-      const n6 = n5 | ((aesSrc(data, at + 6) << 5) & 32);
-      plaintext[i] = (n6 | ((aesSrc(data, at + 7) >> 4) & 8)) & 0xff;
+      let acc = 0;
+      for (let j = 0; j < 8; j++) {
+        acc |= (((aesSrc(data, at + j) >>> wire[j]) & 1) << compact[j]);
+      }
+      plaintext[i] = acc & 0xff;
     }
     plaintext[31] = 1;
     const blocks = [];
@@ -618,14 +682,13 @@ class AesV3 {
       const at = i * 8;
       const k = key[i] & 0xff;
       // JS 语义：越界读写均静默忽略，故读用 aesSrc()、写用 aesPut()
-      aesPut(out, at, (aesSrc(out, at) & 0xdf) | ((k << 4) & 32));
-      aesPut(out, at + 1, (aesSrc(out, at + 1) & 0xbf) | (k & 64));
-      aesPut(out, at + 2, (aesSrc(out, at + 2) & 0xfb) | ((k << 2) & 4));
-      aesPut(out, at + 3, (aesSrc(out, at + 3) & 0xef) | ((k >> 3) & 16));
-      aesPut(out, at + 4, (aesSrc(out, at + 4) & 0xf7) | ((k + k) & 8));
-      aesPut(out, at + 5, (aesSrc(out, at + 5) & 0xfd) | ((k >> 3) & 2));
-      aesPut(out, at + 6, (aesSrc(out, at + 6) & 0xfe) | ((k >> 5) & 1));
-      aesPut(out, at + 7, (aesSrc(out, at + 7) & 0x7f) | ((k << 4) & 128));
+      for (let j = 0; j < 8; j++) {
+        const bit = wire[j];
+        const mask = ((1 << bit) & 0xff);
+        aesPut(out, at + j,
+          (aesSrc(out, at + j) & ((~mask) & 0xff))
+          | (((k >>> compact[j]) & 1) << bit));
+      }
     }
     return Buffer.concat([key.subarray(key.length - 1, key.length), out]);
   }
@@ -794,8 +857,13 @@ function helios(khronos) {
   return heliosWith(khronos, rndInt32());
 }
 
-/** 可注入 random 的 helios（默认重载用 rndInt32()）。 */
-function heliosWith(khronos, random) {
+/** v5 helios：与 v3 同算法，仅 license 换成 646637794（N3urda/hongguoTV V5）。 */
+function heliosV5(khronos) {
+  return heliosWith(khronos, rndInt32(), V5_LICENSE);
+}
+
+/** 可注入 random 与 license 的 helios（默认 license 为 v3 的 1588093228）。 */
+function heliosWith(khronos, random, license) {
   const digest = md5(Buffer.concat([le32(random), Buffer.from('8662')]));
   const hex = digest.toString('hex');
   const ascii = Buffer.from(hex, 'ascii');
@@ -818,7 +886,7 @@ function heliosWith(khronos, random) {
     b0 = x8;
     b8 = queue.shift();
   }
-  const text = String(khronos) + '-1588093228-8662';
+  const text = String(khronos) + '-' + (license || '1588093228') + '-8662';
   const tb = Buffer.from(text);
   const padLen = Math.floor((tb.length + 1 + 15) / 16) * 16;
   const pad = Buffer.alloc(padLen);
@@ -841,6 +909,184 @@ function heliosWith(khronos, random) {
   }
   const all = [le32(random), ...output];
   return Buffer.concat(all).toString('base64');
+}
+
+// ==================== v5 播放签名（Android v04.10.03 Medusa/Helios/Khronos） ====================
+
+/**
+ * v5 hashF13：iv 低 4 位固定等于 12（branch 0），ivV1 / chosen 为 v5 常量。
+ * 与 v3 主分支共用同一套 di 展开 / 主循环，仅参数与末尾校验位（|0x20）不同。
+ */
+function hashF13v5(querySm3, bodyMd5, tsBytes, khronos) {
+  const ivV1 = 0x9d4a97c2 | 0;
+  const countV1 = (ivV1 + khronos + 1) & 255;
+  const countV2 = (ivV1 + khronos) | 0;
+  const tt = new Array(HASH_TABLE.length);
+  for (let i = 0; i < tt.length; i++) tt[i] = ror(HASH_TABLE[i], countV1);
+  const n0 = (countV2 + 2) & 7;
+  const seed = [0xfa, 0x45, 0x61, 0xd7];
+  const pad = Buffer.alloc(seed.length);
+  for (let i = 0; i < seed.length; i++) pad[i] = ((seed[i] | (seed[i] << 8)) >> n0) & 255;
+  const data = Buffer.concat([querySm3, bodyMd5, tsBytes, pad,
+    Crypto.unhex('00000000000001a0')]);
+
+  const di = new Array((data.length / 4) + 112 + 16).fill(0);
+  let diLen = 0;
+  for (let i = 0; i + 3 < data.length; i += 4) di[diLen++] = readBe32(data, i);
+  let di0 = di[0];
+  for (let i = 0; i < 112; i++) {
+    const di1 = di[i + 1];
+    const di14 = di[i + 14];
+    const r1 = rotl(di1, 14) ^ rotl(di1, 25) ^ (di1 >>> 3);
+    const r2 = rotl(di14, 13) ^ rotl(di14, 15) ^ (di14 >>> 10);
+    di[diLen++] = (di0 + di[i + 9] + r1 + r2) | 0;
+    di0 = di1;
+  }
+
+  const initRaw = [0x7aba4fc8, 0x67166507, 0x6403fa00, 0x340f512f,
+    984304912, 3005047866, 2874125293, 2152413264];
+  const init = new Array(8);
+  for (let i = 0; i < 8; i++) init[i] = ror(initRaw[i], countV2 & 31);
+  const chosen = [96, 1, 3, 4, 0, 6, 5, 2, 0, 7, 7];
+  const d = init.slice();
+  for (let i = 0; i < chosen[0]; i++) {
+    const base = (ivV1 + i) | 0;
+    const n0v = di[base & 127];
+    const n1 = ((d[chosen[3]] ^ d[chosen[4]]) & d[chosen[1]]) ^ d[chosen[3]];
+    const n2 = rotl(d[chosen[1]], 26) ^ rotl(d[chosen[1]], 21) ^ rotl(d[chosen[1]], 7);
+    const n4 = (n0v + n1 + n2 + tt[base & 63] + d[chosen[5]]) | 0;
+    const n5 = rotl(d[chosen[2]], 30) ^ rotl(d[chosen[2]], 19) ^ rotl(d[chosen[2]], 10);
+    const n6 = (d[chosen[2]] & d[chosen[6]]) | ((d[chosen[2]] | d[chosen[6]]) & d[chosen[7]]);
+    const n7 = (n5 + n6) | 0;
+    const old = d[chosen[9]];
+    const last = d[d.length - 1];
+    for (let k = d.length - 1; k >= 1; k--) d[k] = d[k - 1];
+    d[0] = last;
+    d[chosen[10]] = (n7 + n4) | 0;
+    d[chosen[8]] = (old + n4) | 0;
+  }
+  const ret = Buffer.alloc(32);
+  for (let i = 0; i < 8; i++) putBe32(ret, i * 4, (d[i] + init[i]) | 0);
+  for (let i = 0; i < 16; i++) ret[i] = ret[i] ^ ret[i + 16];
+  return Buffer.concat([ret.subarray(0, 16),
+    le32((sumMd5(ret.subarray(0, 16)) | 0x20) | 0)]);
+}
+
+/**
+ * v5 x-medusa。移植自 N3urda/hongguoTV Signer.medusaV5（GPL-3.0-only）。
+ *
+ * @param {string} url 完整 URL（含 query，签名按 '?' 之后的原文计算）
+ * @param {Buffer|null} body 实际发送的 gzip 压缩体
+ * @param {number} khronos 秒级时间戳
+ * @param {object} who { device_id, version_name, channel, device_type, os_version }
+ */
+function medusaV5(url, body, khronos, who) {
+  const bodyMd5 = body != null && body.length > 0 ? md5(body) : Buffer.alloc(16);
+  const query = queryOf(url);
+  const querySm3 = sm3(Buffer.from(query));
+  const ts = le32(khronos | 0);
+  const f13 = hashF13v5(querySm3, bodyMd5, ts, khronos);
+
+  const version = who.version_name;
+  const deviceInfo = proto([
+    [1, 1, 'sint'], [2, 2, 'sint'], [3, '8662'], [4, who.device_id],
+    [5, PROCESS_NONCE], [6, '!noperm!'], [12, 'Asia/Shanghai,8'], [13, 'zh_CN'],
+    [22, who.os_version], [25, PROCESS_STARTED, 'sint'],
+    [30, who.device_type], [31, 'HONOR'], [32, who.device_type], [34, 'HONOR']]);
+  const env = proto([
+    [6, 'v04.10.03.04-bugfix'], [8, who.channel],
+    [12, deviceInfo, 'message'], [14, version]]);
+  const message = proto([
+    [1, V5_MAGIC, 'bytes'], [2, 5, 'sint'], [3, rndInt32(), 'sint'],
+    [4, '8662'], [5, who.device_id], [6, V5_LICENSE],
+    [7, version], [8, 'v04.10.03-ml-android'], [9, 0x040a0300, 'sint'],
+    [10, Buffer.alloc(8), 'bytes'], [12, khronos, 'sint'], [13, f13, 'bytes'],
+    [14, querySm3.subarray(0, 6), 'bytes'],
+    [15, proto([[1, 1, 'sint'], [2, 1, 'sint'], [3, 1, 'sint'], [5, 1, 'sint']]), 'message'],
+    [17, khronos, 'sint'], [20, 'none'], [21, 377, 'sint'], [23, env, 'message'],
+    [24, '{"cmr":16777216,"cmr2":16777216,"un_h":11,"vpn":0,"kd":0,"dyn":"","do":1,"tk":true}']]);
+
+  const nonce = rndInt32();
+  const hs = keyHash(V5_SIGN_KEY, nonce);
+  const hash = hs[0];
+  const seed = hs[1];
+  // transformed = (flags(8 零字节) + xmxor(message, hash)) 整体逆序，再逐字节异或 seed[~i & 3]
+  let transformed = xmxor(message, hash);
+  transformed = Buffer.concat([Buffer.alloc(8), transformed]);
+  for (let i = 0, j = transformed.length - 1; i < j; i++, j--) {
+    const t = transformed[i];
+    transformed[i] = transformed[j];
+    transformed[j] = t;
+  }
+  for (let i = 0; i < transformed.length; i++) {
+    transformed[i] = (transformed[i] ^ seed[(~i) & 3]) & 0xff;
+  }
+  const check = (((querySm3[0] & 63) << 14) | 0x18000001 | ((f13[0] & 63) << 8)) | 0;
+  const xmRand = rndInt32();
+  const packed = Buffer.concat([Buffer.from([0xca]), le32(xmRand), le32(check), transformed,
+    Buffer.from([(nonce >>> 16) & 255, (nonce >>> 24) & 255])]);
+  const encrypted = new AesV3(md5(V5_SIGN_KEY.subarray(0, 16)), khronos, true)
+    .encrypt(packed, md5(V5_SIGN_KEY.subarray(16, 32)));
+  const prefix = Buffer.concat([le32(5), V5_MAGIC]);
+  const tsLE = le32(khronos | 0);
+  for (let i = 0; i < prefix.length; i++) {
+    prefix[i] = (prefix[i] ^ tsLE[i & 3]) & 0xff;
+  }
+  return Buffer.concat([prefix,
+    Buffer.from([nonce & 255, (nonce >>> 8) & 255, 0, 1]), encrypted]).toString('base64');
+}
+
+/** v5 分支：iv 低 4 位等于 12 才算 branch 0（与 signPlayback 的选 ticket 逻辑一致）。 */
+function branchV5(queryStr, body, khronos) {
+  const bodyMd5 = body != null && body.length > 0 ? md5(body) : Buffer.alloc(16);
+  const q = sm3(Buffer.from(queryStr));
+  const iv = getIv(getIv(getIv(0x20230928, q), bodyMd5), le32(khronos | 0));
+  return ((iv & 15) === 12) ? 0 : 1;
+}
+
+/** v5 query 编码：与参考实现的 URLEncoder 兜底一致（只额外转 !'()）。 */
+function signV5Encode(value) {
+  return encodeURIComponent(String(value))
+    .replace(/[!'()]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+function encodeV5Query(values) {
+  const parts = [];
+  for (const k of Object.keys(values)) {
+    parts.push(signV5Encode(k) + '=' + signV5Encode(String(values[k])));
+  }
+  return parts.join('&');
+}
+
+/**
+ * v5 播放签名：在 0..1023 内调整 _rticket 直到 branch 0，返回最终 URL 与签名头。
+ * 对应 N3urda/hongguoTV Signer.signPlayback（mobileV5=true）。
+ *
+ * @param {string} base 不含 query 的接口 URL
+ * @param {object} values 有序 query 参数（不含 _rticket，本函数内部追加并抖动）
+ * @param {Buffer|null} body gzip 压缩体
+ * @param {number} now 毫秒时间戳
+ * @returns {{url: string, headers: object}}
+ */
+function signPlaybackV5(base, values, body, now) {
+  const ts = Math.floor(now / 1000);
+  for (let offset = 0; offset <= 1023; offset++) {
+    const ticket = now + offset;
+    const query = encodeV5Query(Object.assign({}, values, { _rticket: String(ticket) }));
+    if (branchV5(query, body, ts) !== 0) continue;
+    const url = base + '?' + query;
+    const headers = {
+      'x-khronos': String(ts),
+      'x-helios': heliosV5(ts),
+      'x-medusa': medusaV5(url, body, ts, values),
+    };
+    if (body != null && body.length > 0) {
+      headers['Content-Type'] = 'application/json; charset=utf-8';
+      headers['x-ss-stub'] = md5(body).toString('hex').toUpperCase();
+    }
+    return { url, headers };
+  }
+  throw new Error('无法生成播放签名');
 }
 
 // ==================== 分支判定与入口 ====================
@@ -907,4 +1153,15 @@ function hashF13Hex(queryText, bodyText, khronos) {
     le32(khronos), khronos).toString('hex');
 }
 
-module.exports = { sign, branchOf, hashF13Hex };
+module.exports = {
+  sign,
+  branchOf,
+  hashF13Hex,
+  // v5 播放签名（供 app-source.js 取直链使用）
+  signPlaybackV5,
+  branchV5,
+  hashF13v5,
+  medusaV5,
+  heliosV5,
+  AesV3,
+};
