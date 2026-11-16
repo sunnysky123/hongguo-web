@@ -63,11 +63,20 @@
  *
  *   实测（2026-11-11）：修复前同一分集 PLAYBACK_EMPTY_RESPONSE；换成真实签名后
  *   同一分集 ~300ms 返回 25KB 完整模型，GET / POST 两条路径都成立。
+ *
+ * 2026-11-16 上游变化（同步自 N3urda/hongguoTV，SIGNING_V5.md / 0.16.6）：
+ *   551 Argus/Ladon 签名再次被上游拒绝（HTTP 200 空 body）。播放取流整体换到
+ *   Android v04.10.03 的 v5 签名链：
+ *   1) 端点换成 a 域名 POST /novel/player/multi_video_model/player/v1（gzip JSON）；
+ *   2) 签名头改为 x-khronos / x-helios / x-medusa 三个（v5 Medusa/Helios/Khronos，
+ *      由 core/pure-sign.js 的 signPlaybackV5 计算），并抖动 _rticket 选 branch 0；
+ *   3) 请求体 device_level=1、带 disable_video_relate_book 与 dr_scene="player"；
+ *   4) 响应模型从 data.1004[vid].video_model（1004 缺失退回 data[vid]）提取。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');
 const Spade = require('../core/spade');
-const PlaybackSign = require('../core/playback-sign');
+const PureSign = require('../core/pure-sign');
 const Safeguards = require('../core/safeguards');
 const { getPlaybackDevice, resetPlaybackDevice } = require('./playback-device');
 const Guard = require('./upstream-guard');
@@ -76,15 +85,8 @@ const Http = require('../util/http');
 const Json = require('../util/json');
 const Log = require('../util/log');
 
-/** 接口主机（自检与排障用）。完整 URL 由 postPlayback 现拼。 */
+/** 接口主机（自检与排障用）。旧 b 域名；v5 播放已换到 a 域名的 V5_PLAYER_API。 */
 const VIDEO_API_HOST = 'api5-normal-sinfonlineb.fqnovel.com';
-
-/**
- * video_tab 恢复接口（上游 6.7）：旧 POST 空响应后的签名 GET 退路。
- * 实测换备用域重复同一条 POST 路径照样空，只有这条 GET 能拿到模型。
- */
-const VIDEO_TAB_API = 'https://' + VIDEO_API_HOST
-  + '/reading/bookapi/video_tab/multi_video_model/v1/';
 
 const VIDEO_UA = 'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47C; '
   + 'Build/BP2A.250605.031.A3; Cronet/TTNetVersion:04657795 2026-01-23 '
@@ -98,6 +100,32 @@ const VIDEO_UA = 'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47
 const PLAYBACK_UA = VIDEO_UA.replace('71332', '74332');
 
 const VERSION_NAME = '7.1.3.32';
+
+// ==================== v5 播放取流（Android v04.10.03 Medusa/Helios/Khronos） ====================
+// 2026-11-16 起上游改用 /novel/player/multi_video_model/player/v1（a 域名），并校验
+// 真正的 v5 medusa/helios/khronos 签名（此前 551 Argus/Ladon 被拒，返回 HTTP 200 空 body）。
+// 移植自 N3urda/hongguoTV（SIGNING_V5.md / MobilePlayback.kt / Signer.kt，GPL-3.0-only）。
+
+/** v5 播放模型接口（a 域名，POST + gzip JSON）。 */
+const V5_PLAYER_API = 'https://api5-normal-sinfonlinea.fqnovel.com'
+  + '/novel/player/multi_video_model/player/v1';
+
+/** v5 播放请求 UA（对齐 N3urda/hongguoTV MobilePlayback 的厂商 UA）。 */
+const V5_PLAYER_UA = 'com.phoenix.read/73932 (Linux; U; Android 12; zh_CN_#Hans; '
+  + 'PGT-AN10; Build/V417IR;tt-ok/3.12.13.20)';
+
+/** v5 播放请求的固定设备字段（有序；iid/cdid/device_id 由注册身份注入，_rticket 由签名补齐）。 */
+const V5_PLAYER_DEVICE = {
+  aid: '8662',
+  app_name: 'novelread',
+  version_code: '74332',
+  version_name: '7.4.3.32',
+  channel: 'vivo_8662_64',
+  device_platform: 'android',
+  device_type: 'PGT-AN10',
+  os_version: '12',
+  update_version_code: '74332',
+};
 
 /** 请求域名白名单（他的 checkedUrl 域名表，防签名 body 被带往第三方）。 */
 const API_DOMAINS = ['fqnovel.com', 'snssdk.com'];
@@ -181,17 +209,12 @@ async function fetch(vid, quality, opts) {
     throw new Error('分集编号无效');
   }
 
-  // ---- 1. 播放取流：注册身份 + 真实播放签名（551 Argus / Ladon）----
-  // 第一跳是 video_tab 签名 GET（无正文），空响应才用一次旧 POST
-  // multi_video_model/v1（gzip 正文，摘要与签名同源）。两次尝试共用熔断预算，
-  // 整条链路（含匿名注册）排进共享节奏链，避免预热/下载突发打满上游。
-  const body = zlib.gzipSync(Buffer.from(Json.stringify(payload(vid))));
-  // 播放身份视为一次性：每次取流注册全新匿名身份。同一身份短时间内重复
-  // 取流会被上游判重返回空响应 —— 常驻复用身份正是「第一次能播、之后连
-  // 续空响应进熔断」的根源。
+  // ---- 1. 播放取流：注册身份 + v5 签名（Medusa/Helios/Khronos）----
+  // 播放身份视为一次性：每次取流注册全新匿名身份（上游 6.6 同款）。
+  const body = zlib.gzipSync(Buffer.from(Json.stringify(v5Payload(vid))));
   const j = await paced(async () => {
     const identity = await getPlaybackDevice({ fresh: true });
-    return postPlaybackWithRetry(body, vid, identity);
+    return postPlaybackV5(body, vid, identity);
   });
   if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
     // 明确的业务拒绝：标错误码，让节奏链终止这一批已排队的取流
@@ -199,11 +222,10 @@ async function fetch(vid, quality, opts) {
     rejected.code = 'BUSINESS_REJECTED';
     throw rejected;
   }
-  // video_tab 恢复响应的模型嵌在 data.video_model_data 下；旧 POST 直接在
-  // data[vid]。两者都归一成「分集 id -> 条目」再取本集。
+  // v5 响应的模型嵌在 data.1004[vid].video_model 下（1004 缺失时退回 data[vid]）。
   const data = Json.optObj(j.data);
-  const tabData = data === null ? null : Json.optObj(data.video_model_data);
-  const entries = tabData !== null ? tabData : data;
+  const map1004 = data === null ? null : Json.optObj(data['1004']);
+  const entries = map1004 !== null ? map1004 : data;
   const entry = entries === null ? null : Json.optObj(entries[vid]);
   if (entry === null || isEmpty(entry)) {
     throw new Error('App 接口未返回所选分集');
@@ -326,22 +348,24 @@ async function fetch(vid, quality, opts) {
 
 // ==================== 请求构造 ====================
 
-/** 请求体（biz_param 与老路一致；注意不带 dr_scene）。 */
-function payload(vid) {
+/** v5 请求体（device_level=1，带 disable_video_relate_book 与 dr_scene，对齐 hongguoTV）。 */
+function v5Payload(vid) {
   const biz = Json.obj();
   biz.detail_page_version = 0;
-  biz.device_level = 3;
+  biz.device_level = 1;
   biz.disable_digg_stat = false;
+  biz.disable_video_relate_book = false;
   biz.need_all_video_definition = true;
   biz.need_mp4_align = false;
   biz.use_os_player = false;
   biz.use_server_dns = false;
   biz.video_platform = 1024;
   const mixed = Json.obj();
-  mixed['1004'] = [vid];
+  mixed['1004'] = [String(vid)];
   const out = Json.obj();
   out.biz_param = biz;
   out.mixed_video_id_map = mixed;
+  out.dr_scene = 'player';
   return out;
 }
 
@@ -410,135 +434,15 @@ const VIDEO_TAB_DEVICE = Object.assign({}, DEVICE_BASE, {
  */
 
 /**
- * 播放请求：注册身份 + 真实播放签名（551 Argus + Ladon）；两种形态由 videoId 区分。
+ * v5 播放请求：注册身份 + v5 签名（Medusa/Helios/Khronos）。
+ * 单条 POST 到 /novel/player/multi_video_model/player/v1（a 域名），签名头绑定
+ * 最终 query 与实际发送的 gzip body；空响应计入熔断（整剧下载不会白等几十次）。
  *
- * video_tab GET（videoId 非空，6.9 首选路径）：
- *   无正文签名，不带 gzip / Content-Type / x-ss-stub，带 x-tt-request-tag；
- *   客户端版本 73932 / 7.3.9.32（VIDEO_TAB_DEVICE，与注册 body 版本一致）；
- *   query 带业务参数 video_id / video_id_type / … / from_video_id（空串）。
- *
- * 旧 POST（videoId 为空，6.6 格式，GET 空响应后的备用路径）：
- *   请求体 gzip 压缩 JSON，x-ss-stub 摘要与签名都对发送的同一份压缩体计算，
- *   带 Content-Encoding: gzip；客户端版本 74332 / 7.4.3.32（PLAYBACK_DEVICE）。
- *
- * 共同形态：
- *   1) query 在设备字段与业务参数之后补 ts（秒级）与 _rticket（毫秒）；
- *   2) x-argus / x-ladon / x-khronos / x-ss-req-ticket / x-ss-stub 由
- *      core/playback-sign.js 按「最终 query + 实际 body」计算 —— 这不是可以
- *      随机填充的占位头，算错就是 HTTP 200 + 0 字节；
- *   3) 签名绑定 URL，所以这条链路不允许跟随重定向。
- *
- * query 编码必须与参考实现一致：python urllib.parse.quote 兜底只转 !'()，
- * `*` 保持原样（resolution=1280*2772）。签名对 query 字节级敏感，多编一个
- * 字符都会让服务端算出的摘要对不上。
- *
- * @param {Buffer|null} body POST 模式的 gzip 压缩体；GET 模式忽略
- * @param {string|undefined} videoId video_tab 模式的分集 id；空串/undefined 走旧 POST
- * @param {boolean} [connectionClose] 重试那一次置 true：带 Connection: close，
- *   不复用上一请求的连接（上游同款）
+ * @param {Buffer} body gzip 压缩体
+ * @param {string} vid 分集 id
+ * @param {{device_id,iid,cdid}} identity 匿名注册身份
  */
-async function postPlayback(body, identity, videoId, connectionClose) {
-  const tab = videoId !== null && videoId !== undefined && videoId !== '';
-  const device = tab ? VIDEO_TAB_DEVICE : PLAYBACK_DEVICE;
-  const khronos = Math.floor(Date.now() / 1000);
-  const ticket = Date.now();
-  const api = tab ? VIDEO_TAB_API
-    : 'https://' + VIDEO_API_HOST + '/novel/player/multi_video_model/v1/';
-  // video_tab 的业务参数（上游 6.7，参考 hongguoTV tabVideoModel）：
-  // 全字符串、含空的 from_video_id，插在设备字段之后、ts/_rticket 之前。
-  const values = tab ? {
-    video_id: String(videoId),
-    video_id_type: '0',
-    device_level: '1',
-    need_all_video_definition: '1',
-    need_mp4_align: '0',
-    use_os_player: '0',
-    video_platform: '1024',
-    source: '0',
-    from_video_id: '',
-  } : {};
-  const q = Object.assign({}, device, {
-    device_id: identity.device_id,
-    iid: identity.iid,
-    // 注册身份的第三个字段：参考实现 query 一直带 cdid
-    cdid: identity.cdid,
-  }, values, {
-    ts: String(khronos),
-    _rticket: String(ticket),
-  });
-  let qs = '';
-  for (const k of Object.keys(q)) {
-    if (qs.length > 0) qs += '&';
-    qs += pyEncode(k) + '=' + pyEncode(String(q[k]));
-  }
-  const url = api + '?' + qs;
-  const signedBody = tab ? null : body;
-  // 签名对「最终 query 原文 + 实际发送的 body」计算，两者必须与发出去的一字不差。
-  const signature = PlaybackSign.signPlayer({ query: qs, body: signedBody, ts: khronos });
-
-  const headers = {};
-  headers['User-Agent'] = VIDEO_UA.replace('71332', device.version_code);
-  headers.Accept = 'application/json; charset=utf-8,application/x-protobuf';
-  headers['sdk-version'] = '2';
-  headers['x-xs-from-web'] = '0';
-  headers['passport-sdk-version'] = tab ? '50561' : '5051452';
-  headers['x-ss-dp'] = String(device.aid);
-  Object.assign(headers, signature);
-  headers['x-tt-dt'] = '';
-  headers['x-tt-store-region'] = 'cn';
-  headers['x-tt-store-region-src'] = 'did';
-  if (tab) {
-    headers['x-tt-request-tag'] = 't=0;n=0';
-  } else {
-    headers['Content-Type'] = 'application/json; charset=UTF-8';
-    headers['Content-Encoding'] = 'gzip';
-  }
-  if (connectionClose === true) headers.Connection = 'close';
-
-  const res = await Http.send({
-    url, method: tab ? 'GET' : 'POST', timeoutMs: 15000, headers,
-    body: tab ? null : body,
-    // 签名头绑定这条 URL：跳到别处签名即失效，直接当失败处理
-    followRedirect: false,
-  });
-  if (res.status !== 200) {
-    const error = new Error('App 接口 HTTP ' + res.status);
-    error.status = res.status;
-    throw error;
-  }
-  const text = res.text();
-  const j = Json.parseObject(text);
-  const code = j === null ? 0 : Number((j.Code !== undefined ? j.Code : (j.code !== undefined ? j.code : 0)) || 0);
-  if ((j !== null && code !== 0) || j === null || Json.optObj(j.data) === null) {
-    // 空响应（HTTP 200 + 空 body 或缺 data）：上游未公开具体原因，签名、
-    // 身份判重、限流等归因都未经证实，文案不给结论（上游 6.6 b0b2b5a 同款，
-    // 避免把排查引向错误方向 —— 本机到上游是通的，注册也正常）。
-    // 明确的业务拒绝（如 101113 CHAPTER_INFO_GET_ERROR 表示该集不存在）另标
-    // 错误码，便于上层区分「这一集没有」与「整批被拦」。
-    const emptyBody = text.trim() === '';
-    const hint = emptyBody ? '（HTTP 200 空响应，原因尚未确认）' : '';
-    const error = new Error('App 接口未返回 data' + hint
-      + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
-        ? '（原始响应: ' + text + '）' : ''));
-    if (emptyBody) {
-      error.code = 'PLAYBACK_EMPTY_RESPONSE';
-      error.deviceId = identity.device_id;
-    } else if (j !== null && code !== 0) {
-      error.code = 'BUSINESS_REJECTED';
-      error.businessCode = code;
-    }
-    throw error;
-  }
-  return j;
-}
-
-/**
- * 两次尝试共用一次熔断预算：先走 video_tab 签名 GET（上游 6.9 首选）；空响应
- * 后注册全新身份、退回旧 POST multi_video_model/v1（上游 6.9 同款）。
- * 实测换备用域重复同一条 POST 路径照样空，所以备用域退路已移除；
- * 明确的 HTTP / 业务拒绝不触发恢复。
- */
-async function postPlaybackWithRetry(body, vid, identity) {
+async function postPlaybackV5(body, vid, identity) {
   // 熔断中：直接快速失败，不再打上游（整剧下载会连试几十集，每次都白等超时）
   if (!Guard.acquire()) {
     const blocked = new Error(Guard.blockedMessage());
@@ -551,34 +455,53 @@ async function postPlaybackWithRetry(body, vid, identity) {
   // reportEmpty 会释放它，而 HTTP 403/429、超时、注册失败等分支都是直接
   // 抛错 —— 不在这里兜底释放，probing 会永久为 true，进程再也取不到流。
   try {
-    // 第一跳 video_tab GET，空响应才用一次旧 POST
-    const attempts = [String(vid), ''];
-    let current = identity;
-    let last = null;
-    for (let i = 0; i < attempts.length; i += 1) {
-      try {
-        // 第二次尝试带 Connection: close（上游同款），不复用上一请求的连接
-        const j = await postPlayback(body, current, attempts[i], i > 0);
-        Guard.reportOk();
-        return j;
-      } catch (error) {
-        last = error;
-        // 签名生成失败、HTTP 5xx 这类不是「空响应」，换路径也没意义
-        if (error.code !== 'PLAYBACK_EMPTY_RESPONSE') throw error;
-        if (i + 1 < attempts.length) {
-          await Safeguards.sleep(300);
-          // 空响应时连身份一起换：播放身份视为一次性，被判重/被拒的身份没有
-          // 复用价值。注册失败就沿用原身份，让备用路径还有一次机会（上游同款）。
-          try {
-            current = await getPlaybackDevice({ fresh: true });
-          } catch (e) {
-            // 注册失败就沿用原身份，让备用路径还有一次机会
-          }
-        }
-      }
+    const values = Object.assign({}, V5_PLAYER_DEVICE, {
+      iid: identity.iid,
+      cdid: identity.cdid,
+      device_id: identity.device_id,
+    });
+    const signed = PureSign.signPlaybackV5(V5_PLAYER_API, values, body, Date.now());
+
+    const headers = {};
+    headers['User-Agent'] = V5_PLAYER_UA;
+    headers.Accept = 'application/json';
+    headers['Content-Encoding'] = 'gzip';
+    headers['x-ss-stub'] = crypto.createHash('md5').update(body).digest('hex').toUpperCase();
+    Object.assign(headers, signed.headers);
+
+    const res = await Http.send({
+      url: signed.url, method: 'POST', timeoutMs: 15000, headers, body,
+      // 签名头绑定这条 URL：跳到别处签名即失效，直接当失败处理
+      followRedirect: false,
+    });
+    if (res.status !== 200) {
+      const error = new Error('App 接口 HTTP ' + res.status);
+      error.status = res.status;
+      throw error;
     }
-    Guard.reportEmpty();
-    throw last;
+    const text = res.text();
+    const j = Json.parseObject(text);
+    const code = j === null ? 0
+      : Number((j.Code !== undefined ? j.Code : (j.code !== undefined ? j.code : 0)) || 0);
+    if ((j !== null && code !== 0) || j === null || Json.optObj(j.data) === null) {
+      // 空响应（HTTP 200 + 空 body 或缺 data）：上游未公开具体原因，文案不给结论。
+      const emptyBody = text.trim() === '';
+      const hint = emptyBody ? '（HTTP 200 空响应，原因尚未确认）' : '';
+      const error = new Error('App 接口未返回 data' + hint
+        + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
+          ? '（原始响应: ' + text + '）' : ''));
+      if (emptyBody) {
+        error.code = 'PLAYBACK_EMPTY_RESPONSE';
+        error.deviceId = identity.device_id;
+        Guard.reportEmpty();
+      } else if (j !== null && code !== 0) {
+        error.code = 'BUSINESS_REJECTED';
+        error.businessCode = code;
+      }
+      throw error;
+    }
+    Guard.reportOk();
+    return j;
   } finally {
     // 幂等：reportOk / reportEmpty 已复位时这里不会带来副作用
     Guard.releaseProbe();

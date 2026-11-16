@@ -988,6 +988,7 @@ A：不用填。收到 401 时前端会自动换新密钥并重新加载，卡�
 
 - **[hongguo-desktop-releases](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases)** —— 桌面端版本，提供了本项目最初的分析起点与对照实现，感谢原作者的分享。
 - **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/pure-sign.js` 与 `service/web-source.js` 移植自此；播放专用签名（551 Argus + Ladon）移植自其 6.9 版本的 `src/native/playback-signature.js`（实现源自 N3urda/hongguoTV 与 ch6vip/fqapp，GPL-3.0-only），对应本项目 `core/playback-sign.js`。
+- **[N3urda/hongguoTV](https://github.com/N3urda/hongguoTV)** —— Android TV 端实现，提供了 v5 播放签名（Medusa / Helios / Khronos，`SIGNING_V5.md` / `Signer.kt` / `MobilePlayback.kt`）的参考实现，本项目 `core/pure-sign.js` 的 v5 播放签名与 `service/app-source.js` 的 v5 取流链路移植自此（GPL-3.0-only），感谢原作者的分享。
 
 ---
 
