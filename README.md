@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.3.2` 为例） |
+| 你的系统 | 下载的文件（`1.3.3` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.2-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.2-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.2-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.2-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.2-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.2-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.2-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.3-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.3-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.3-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.3-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.3-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.3-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.3-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.3.2-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.3.3-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.3.2-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.3.3-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -815,26 +815,36 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 实测同一分集修复前 `PLAYBACK_EMPTY_RESPONSE`、修复后约 300ms 返回 25KB 完整
 模型；签名全部在本进程内算，没有外部依赖。
 
-请求顺序也随 6.9 调整：先打**签名 GET** `video_tab/multi_video_model/v1/`
-（无正文、无需 gzip），空 body 才用一次旧 POST `multi_video_model/v1`
-（gzip 正文，摘要与签名同源）；两次都空才计入熔断。整条链路（含匿名注册）
-共享一条节奏链：同一时刻只放行一个取流，两次之间至少间隔 1 秒，
+**2026-11-16 起（对齐上游 0.16.6）播放取址换成 Android v5 签名链**：接口为
+a 域名 `novel/player/multi_video_model/player/v1`（gzip JSON 正文），签名头只带
+`x-khronos` / `x-helios` / `x-medusa` 三个（`core/pure-sign.js` 的
+`signPlaybackV5`）。
+
+该接口仍会间歇性返回 HTTP 200 + 0 字节。**2026-11-20 起（对齐上游 0.16.10）
+增加空响应恢复**：用刚才那次取流的同一个注册身份，补一次 b 域名签名 GET
+`video_tab/multi_video_model/v1/`（无正文，query 用 `7.3.9.32` 版本族 +
+`video_id` 等业务参数），并且**严格只认本集**——响应对不上这一集就按原样抛回
+最初的空响应错误，不会拿别的分集顶替。响应带 `Retry-After` 时不补这次请求
+（判为限流），直接交给熔断退避。整条链路（含匿名注册）共享一条节奏链：
+同一时刻只放行一个取流，两次之间至少间隔 1 秒，
 整剧预热 / 批量下载不会在瞬间打满上游。空响应的具体原因上游未公开，
 日志文案不给未经证实的归因。调试可开 `HG_APPSOURCE_DEBUG=1`
 看原始响应。若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com`
 的网络问题（DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
 看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
-排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
-恢复路径为同域 `video_tab/multi_video_model/v1`，
-其余为 `preload/v1`）。
+排查时先核对上游端点路径（取直链为 a 域名
+`novel/player/multi_video_model/player/v1`，空响应恢复为 b 域名
+`reading/bookapi/video_tab/multi_video_model/v1/`，其余为 `preload/v1`）。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
-取直链已统一改走 App 取址链路（`AppSource`：b 域名 `video_tab` 签名 GET 为主、
-`multi_video_model/v1` 签名 POST 兜底；片源内联在 `video_model.video_list` 时
-直接使用，否则跟随 `fallback_api` 二次请求；媒体 URL 带 `key_seed` 时自动解密）。
+取直链已统一改走 App 取址链路（`AppSource`：a 域名
+`novel/player/multi_video_model/player/v1` 的 v5 签名 POST 为主；空 body 时用
+同一身份补一次 b 域名 `video_tab/multi_video_model/v1/` 签名 GET，且只认本集；
+片源内联在 `video_model.video_list` 时直接使用，否则跟随 `fallback_api` 二次
+请求；媒体 URL 带 `key_seed` 时自动解密）。
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
