@@ -82,6 +82,15 @@
  *   2) 严格只认本集：从 data.video_model_data[vid]（旧形态 data[vid]）取，
  *      响应对不上这一集时按原样抛回**最初的空响应错误**，绝不拿别的分集顶替；
  *   3) 响应带 Retry-After 时判为限流，不做这次补请求，直接交给熔断退避。
+ *
+ * 2026-11-24 空响应再次出现（同步自 N3urda/hongguoTV 0.16.14 / ef328f3，
+ *   Issue #102）：根因在 v5 medusa 的 wire field 21 —— 此前写的 377 只有
+ *   Kotlin 实现用过，官方 App / 独立 SDK 的成功请求都是 protobuf 原值 624
+ *   （zigzag 有符号 312），服务端对 377 一律回 HTTP 200 + 0 字节。
+ *   field 21 已在 core/pure-sign.js 固定为 V5_FIELD21 = 312。
+ *   上游同版本把端点换到 reading.snssdk.com 的 preload/v1（74532 版本族、
+ *   device_level=2、dr_scene=preload），但其研究记录明确该路径不是判别变量
+ *   （同一份签名改回 player/v1 照样成功），因此这里不改主机 / 版本族 / 正文。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');

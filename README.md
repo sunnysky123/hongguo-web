@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.3.3` 为例） |
+| 你的系统 | 下载的文件（`1.3.4` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.3-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.3-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.3-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.3-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.3-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.3-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.3-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.4-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.4-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.4-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.4-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.4-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.4-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.4-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.3.3-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.3.4-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.3.3-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.3.4-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -836,6 +836,17 @@ a 域名 `novel/player/multi_video_model/player/v1`（gzip JSON 正文），签�
 排查时先核对上游端点路径（取直链为 a 域名
 `novel/player/multi_video_model/player/v1`，空响应恢复为 b 域名
 `reading/bookapi/video_tab/multi_video_model/v1/`，其余为 `preload/v1`）。
+
+**2026-11-24 起（对齐上游 0.16.14 / ef328f3，Issue #102）：v5 medusa 的 wire
+field 21 从 `377` 改为 `312`**（`core/pure-sign.js` 的 `V5_FIELD21`）。上游抓包
+A/B 显示官方 App 与独立 SDK 的成功请求里该字段都是 protobuf 原值 624（zigzag
+有符号 312），`377` 只有 Kotlin 实现用过，服务端对这类请求一律回 HTTP 200 + 0
+字节。这正是 11-16 之后空响应再次出现的原因：实测报错分集修复前空响应、
+修复后约 0.7 秒返回 1080p 完整模型。上游同版本还把取流端点换到
+`reading.snssdk.com` 的 `preload/v1`（`74532` 版本族、`device_level=2`、
+`dr_scene=preload`），但其研究记录明确指出该路径**不是**判别变量（同一份签名
+改回 `player/v1` 照样成功），只改 field 21 即可恢复，因此本项目仍走原 a 域名
+`player/v1`、版本族与请求体形态不变。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
