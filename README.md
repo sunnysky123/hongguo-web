@@ -837,6 +837,17 @@ a 域名 `novel/player/multi_video_model/player/v1`（gzip JSON 正文），签�
 `novel/player/multi_video_model/player/v1`，空响应恢复为 b 域名
 `reading/bookapi/video_tab/multi_video_model/v1/`，其余为 `preload/v1`）。
 
+**2026-11-24 起（对齐上游 0.16.14 / ef328f3，Issue #102）：v5 medusa 的 wire
+field 21 从 `377` 改为 `312`**（`core/pure-sign.js` 的 `V5_FIELD21`）。上游抓包
+A/B 显示官方 App 与独立 SDK 的成功请求里该字段都是 protobuf 原值 624（zigzag
+有符号 312），`377` 只有 Kotlin 实现用过，服务端对这类请求一律回 HTTP 200 + 0
+字节。这正是 11-16 之后空响应再次出现的原因：实测报错分集修复前空响应、
+修复后约 0.7 秒返回 1080p 完整模型。上游同版本还把取流端点换到
+`reading.snssdk.com` 的 `preload/v1`（`74532` 版本族、`device_level=2`、
+`dr_scene=preload`），但其研究记录明确指出该路径**不是**判别变量（同一份签名
+改回 `player/v1` 照样成功），只改 field 21 即可恢复，因此本项目仍走原 a 域名
+`player/v1`、版本族与请求体形态不变。
+
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
