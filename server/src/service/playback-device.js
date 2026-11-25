@@ -2,13 +2,12 @@
 /**
  * 匿名播放设备注册（恢复 App 取流的关键一步）。
  *
- * 背景（2026-10-27 实测）：播放接口 multi_video_model/v1 会校验请求中的
- * device_id / iid。此前每次请求随机生成一对互不关联的合成 ID，上游返回
- * 200 + 0 字节（软拦截）；改用平台注册的匿名设备身份后，同一接口正常
- * 返回 code=0 与完整片源（约 22KB）。
+ * 背景：播放接口会校验请求中的 device_id / iid。随机生成、互不关联的合成
+ * ID 会被软拦截（HTTP 200 + 0 字节）；用平台注册的匿名设备身份请求才返回
+ * code=0 与完整片源。
  *
  * 注册协议（ttEncrypt，移植自 tsukiyo-zero/hongguoTV 的 DeviceRegister.kt，
- * GPL-3.0-only，来源见 THIRD-PARTY-NOTICES）：
+ * GPL-3.0-only，来源见 README「致谢」）：
  *   payload = { magic_tag:'ss_app_log', header, _gen_time }
  *   body    = 746305100000(6B) + random(32B) + AES-128-CBC(sha512(gzip) + gzip)
  *   key/iv  = sha512(sha512(random) + KDF_SALT) 前 32 字节
@@ -16,7 +15,7 @@
  * 身份只保留 device_id / iid / cdid，仅存进程内存；不保存设备令牌、
  * Cookie 或完整响应。
  *
- * 两种取用模式（2026-11-10 起对齐上游 6.6）：
+ * 两种取用模式：
  *  - 缓存模式 getPlaybackDevice()：成功结果进程内永久复用（身份不变）；
  *    失败结果只复用 RETRY_COOLDOWN_MS，冷却期过后下次调用会重新注册
  *    —— 否则开机时网络未就绪这类瞬时故障会让整个进程永久不可播放，
@@ -24,7 +23,7 @@
  *  - fresh 模式 getPlaybackDevice({ fresh: true })：跳过缓存，每次注册
  *    全新身份。播放身份视为一次性 —— 同一身份短时间内重复取流会被上游
  *    判重返回空响应；注册失败后有 FRESH_RETRY_COOLDOWN_MS 的快速失败
- *    窗口，避免连环取流把注册接口打爆（上游 registrationRetryAfter 同款）。
+ *    窗口，避免连环取流把注册接口打爆。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -40,8 +39,7 @@ const KDF_SALT = Buffer.from(
   + 'f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58', 'hex');
 
 /**
- * 注册 UA：上游 6.6 用 72232（7.2.2.32）这一版；body 内的版本字段
- * （73932 / 7.3.9.32）保持原抓包值不变。
+ * 注册 UA：用 72232（7.2.2.32）这一版；body 内的版本字段用 73932 / 7.3.9.32。
  */
 const REGISTER_UA = 'com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; '
   + 'Build/BP2A.250605.031.A3)';
@@ -168,7 +166,7 @@ function register() {
  *
  * - 默认（缓存模式）：成功结果进程内永久复用；失败结果只在 RETRY_COOLDOWN_MS
  *   内复用，冷却结束后自动重新注册（无需重启应用）。
- * - { fresh: true }：跳过缓存注册全新身份（播放身份一次性，上游 6.6 同款）。
+ * - { fresh: true }：跳过缓存注册全新身份（播放身份视为一次性）。
  *   注册刚失败过时在 FRESH_RETRY_COOLDOWN_MS 内直接抛上次失败，不连打注册
  *   接口 —— 该行为与上游 registrationRetryAfter 一致。
  *

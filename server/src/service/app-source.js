@@ -1,96 +1,40 @@
 'use strict';
 /**
- * App 签名取直链，算法参考 jackotom/hongguo-drama 的 src/native/app-source.js。
+ * App 签名取直链（播放取流）。
  *
  * 为什么需要这个模块：老的 multi_video_model/preload/v1 链路对部分分集
- * （实测 vid=7693917197759958040）已不再返回 video_model 数据 —— data 为 null，
- * 表现为「预热失败：无直链 / video_model」。修复方式是换一条路：
- *   1. 改打 b 域名（api5-normal-sinfonlineb）的 multi_video_model/v1；
- *      设备身份见下方「2026-10-27 上游变化」；
- *   2. 响应里的 video_model 可能内联 video_list，也可能只给一个 fallback_api
- *      地址，二次 GET 才拿到 video_info.data.video_list；
- *   3. 媒体 URL 可能被 key_seed 加密（AES-128-CBC），需先解密；
- *   4. spade_a -> content key 的推导复用 Spade.unwrapV1。
+ * 不返回 video_model（data 为 null，表现为「预热失败：无直链 / video_model」），
+ * 所以播放直链改由播放接口自己取。
  *
- * 2026-10-27 上游变化（同步自 jackotom/hongguo-drama 3.9 / 5febca2）：
- *   上游开始校验播放请求的设备身份：每次随机合成、互不关联的 iid/device_id
- *   会被软拦截 —— HTTP 200 + 0 字节 body，表现为「预热失败：App 接口未返回 data」。
- *   改为「匿名设备注册」：playback-device.js 调 device_register 注册匿名设备
- *   （进程内复用），播放请求 query 用注册返回的 device_id/iid。
+ * 主路径（单集接口）：
+ *   1. 身份：playback-device.js 注册匿名设备（device_id / iid / cdid），进程内
+ *      复用；随机合成、互不关联的 iid/device_id 会被上游软拦截（HTTP 200 +
+ *      0 字节 body）；
+ *   2. 请求：POST reading.snssdk.com/novel/player/video_model/v1/，正文为明文
+ *      JSON {video_id, content_type:1, biz_param:{device_level:3,...}}；query
+ *      用 73932 / 7.3.9.32 设备族，带 ts 与「抖到 branch 0」的 _rticket；
+ *   3. 签名：x-khronos / x-helios / x-medusa 三个头，由 core/thl-sign.js
+ *      （vendor 便携签名器）计算；x-gorgon / x-ladon / x-argus 上游不校验，
+ *      不发送；
+ *   4. 响应：本集模型在 data.video_model；片源可能内联 video_list，也可能只给
+ *      一个 fallback_api 地址，二次 GET 才拿到 video_info.data.video_list；
+ *      媒体 URL 可能被 key_seed 加密（AES-128-CBC），需先解密；spade_a ->
+ *      content key 的推导复用 Spade.unwrapV1。
  *
- * 2026-11-02 上游变化（同步自 jackotom/hongguo-drama 5.4 / 93e694e3）：
- *   只带注册身份已经不够，接口重新要求签名。现在按上游 5.4 的方式组装：
- *   1) query 末尾追加 ts（秒）与 _rticket（毫秒，递增到 branchOf === 0）；
- *   2) 带六个签名头（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）；
- *   3) 空响应时换备用域 api5-normal-hl.fqnovel.com，并重新注册设备身份；
- *   4) 片源内联在 video_model.video_list 时无需再请求 fallback_api。
+ * 空响应（HTTP 200 + 0 字节）的恢复顺序：
+ *   1. 用同一个注册身份补一次签名 GET video_tab（b 域名
+ *      /reading/bookapi/video_tab/multi_video_model/v1/，无正文、不签
+ *      Content-Type / x-ss-stub，query 用 73932 / 7.3.9.32 版本族 + video_id
+ *      等业务参数）；严格只认本集，响应对不上这一集时抛回最初的空响应错误，
+ *      绝不拿别的分集顶替；响应带 Retry-After 时判为限流，不补请求；
+ *   2. 仍然空则退回旧的 player/v1 POST（a 域名 + gzip JSON、device_level=1、
+ *      dr_scene="player"），模型在 data.1004[vid].video_model；
+ *   3. 两条都空时抛最初的空响应错误。
  *
- * 2026-11-10 上游变化（同步自 jackotom/hongguo-drama 6.6 / d0410c8）：
- *   上游调整了 multi_video_model/v1 的请求格式，按新格式修补空响应问题：
- *   1) 请求体改为 gzip 压缩 JSON，x-ss-stub 摘要与六个签名头都对实际发送
- *      的同一份压缩 Buffer 计算，并带 Content-Encoding: gzip；
- *   2) 播放专用客户端版本统一提升到 74332 / 7.4.3.32：UA、query 设备字段、
- *      x-medusa 签名内设备字段三处一致（见 PLAYBACK_DEVICE）；
- *   3) 补齐 x-ss-stub（正文摘要）、x-ss-dp（应用标识）、passport-sdk-version 头；
- *   4) 每次取流注册全新匿名身份（播放身份视为一次性；同一身份短时间内重复
- *      取流会被上游判重返回空响应，见 playback-device.js 的 fresh 模式）；
- *   5) 空响应文案改为「原因尚未确认」——签名、身份、限流等归因均未经证实。
- *
- * 2026-11-10 上游 6.7（549d4d1，整合 ZainCheung PR #133）：空响应的恢复
- *   路径换成签名 GET video_tab，实测修复播放（同一网络同一剧号修复前
- *   EMPTY_RESPONSE、修复后取到完整片源）：
- *   1) 旧 POST multi_video_model/v1 空响应后，第二次请求不再换备用域重复
- *      同一路径（实测照样空），改为签名 GET
- *      /reading/bookapi/video_tab/multi_video_model/v1/；
- *   2) GET 用 73932 / 7.3.9.32 版本字段（VIDEO_TAB_DEVICE，与注册 body 的
- *      版本资料一致），query 带 video_id 等业务参数（含空的 from_video_id），
- *      无正文：不带 gzip / Content-Type / x-ss-stub，带 x-tt-request-tag；
- *   3) 响应从 data.video_model_data[vid].video_model 提取（旧 POST 仍在
- *      data[vid]），video_list 兼容对象 map 与数组两种形态；
- *   4) 片源模型仍走原有画质 / 域名白名单 / 密钥与 fallback 校验。
- *   参数与响应结构参考 tsukiyo-zero/hongguoTV 的 tabVideoModel（GPL-3.0-only）。
- *
- * 2026-11-11 上游 6.9（b364419）：空响应的真正原因是播放签名无效 ——
- *   此前 x-argus / x-ladon 只是 be32/le32(khronos) 的 base64 占位，6.9 换成了
- *   真正的 551 Argus（Simon + protobuf + AES）与 Ladon（见 core/playback-sign.js）。
- *   同时按 6.9 调整了三个行为：
- *   1) 优先打 video_tab 签名 GET（无正文、无需 gzip），空响应才退回旧 POST；
- *      签名绑定最终 query 与实际 body，不再抖动 _rticket 找 branchOf === 0
- *      —— 那条分支规则是占位签名时代的产物，真实签名不需要；
- *   2) 播放取流（含匿名注册）走同一条共享节奏：同一时刻只放行一个请求，
- *      两次之间至少间隔 PLAYBACK_INTERVAL_MS，避免整剧预热/下载突发；
- *   3) 签名头绑定 URL，所以带签名的跳转一律拒绝（POST 本来就不跟随）。
- *
- *   实测（2026-11-11）：修复前同一分集 PLAYBACK_EMPTY_RESPONSE；换成真实签名后
- *   同一分集 ~300ms 返回 25KB 完整模型，GET / POST 两条路径都成立。
- *
- * 2026-11-16 上游变化（同步自 N3urda/hongguoTV，SIGNING_V5.md / 0.16.6）：
- *   551 Argus/Ladon 签名再次被上游拒绝（HTTP 200 空 body）。播放取流整体换到
- *   Android v04.10.03 的 v5 签名链：
- *   1) 端点换成 a 域名 POST /novel/player/multi_video_model/player/v1（gzip JSON）；
- *   2) 签名头改为 x-khronos / x-helios / x-medusa 三个（v5 Medusa/Helios/Khronos，
- *      由 core/pure-sign.js 的 signPlaybackV5 计算），并抖动 _rticket 选 branch 0；
- *   3) 请求体 device_level=1、带 disable_video_relate_book 与 dr_scene="player"；
- *   4) 响应模型从 data.1004[vid].video_model（1004 缺失退回 data[vid]）提取。
- *
- * 2026-11-20 空响应恢复（同步自 N3urda/hongguoTV 0.16.10 / 478f006）：
- *   v5 POST 仍会间歇性返回 HTTP 200 + 0 字节。上游的恢复方式不是换身份、也不是
- *   重复同一条 POST，而是用**同一个注册身份**补一次签名 GET video_tab：
- *   1) 端点 b 域名 /reading/bookapi/video_tab/multi_video_model/v1/，无正文，
- *      签名仍是 v5 Medusa/Helios/Khronos（body 传 null，不签 Content-Type /
- *      x-ss-stub），query 用 73932 / 7.3.9.32 版本族 + video_id 等业务参数；
- *   2) 严格只认本集：从 data.video_model_data[vid]（旧形态 data[vid]）取，
- *      响应对不上这一集时按原样抛回**最初的空响应错误**，绝不拿别的分集顶替；
- *   3) 响应带 Retry-After 时判为限流，不做这次补请求，直接交给熔断退避。
- *
- * 2026-11-24 空响应再次出现（同步自 N3urda/hongguoTV 0.16.14 / ef328f3，
- *   Issue #102）：根因在 v5 medusa 的 wire field 21 —— 此前写的 377 只有
- *   Kotlin 实现用过，官方 App / 独立 SDK 的成功请求都是 protobuf 原值 624
- *   （zigzag 有符号 312），服务端对 377 一律回 HTTP 200 + 0 字节。
- *   field 21 已在 core/pure-sign.js 固定为 V5_FIELD21 = 312。
- *   上游同版本把端点换到 reading.snssdk.com 的 preload/v1（74532 版本族、
- *   device_level=2、dr_scene=preload），但其研究记录明确该路径不是判别变量
- *   （同一份签名改回 player/v1 照样成功），因此这里不改主机 / 版本族 / 正文。
+ * 节奏与熔断：播放取流（含匿名注册）共享一条节奏链 —— 同一时刻只放行一个
+ * 请求，两次之间至少间隔 PLAYBACK_INTERVAL_MS，避免整剧预热/下载突发；整体
+ * 拒绝（403 / 429）与连续空响应交给 upstream-guard.js 熔断。签名头绑定 URL，
+ * 因此带签名的跳转一律拒绝。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -112,24 +56,30 @@ const VIDEO_UA = 'com.phoenix.read/71332 (Linux; U; Android 16; zh_CN; 25053RT47
   + 'QuicVersion:c67e9834 2025-09-08)';
 
 /**
- * 播放请求 UA（与「注册身份 + 六头签名」路径配套，区别于列表/搜索的 UA）。
- * 2026-11-10 起客户端版本统一提升到 74332：UA、query 设备字段与签名内
- * 设备字段三处一致（上游 6.6 同款，从 VIDEO_UA 派生保证机型段不变）。
+ * 播放请求 UA（与「注册身份 + 签名头」路径配套，区别于列表/搜索的 UA）。
+ * 客户端版本 74332：UA、query 设备字段与签名内设备字段三处必须一致
+ * （从 VIDEO_UA 派生，机型段不变）。
  */
 const PLAYBACK_UA = VIDEO_UA.replace('71332', '74332');
 
 const VERSION_NAME = '7.1.3.32';
 
 // ==================== v5 播放取流（Android v04.10.03 Medusa/Helios/Khronos） ====================
-// 2026-11-16 起上游改用 /novel/player/multi_video_model/player/v1（a 域名），并校验
-// 真正的 v5 medusa/helios/khronos 签名（此前 551 Argus/Ladon 被拒，返回 HTTP 200 空 body）。
-// 移植自 N3urda/hongguoTV（SIGNING_V5.md / MobilePlayback.kt / Signer.kt，GPL-3.0-only）。
+// 旧的播放模型接口与旧 v5 取流形态：仅作单集接口空响应后的回退，签名同样是
+// v5 medusa/helios/khronos。移植自 N3urda/hongguoTV
+// （SIGNING_V5.md / MobilePlayback.kt / Signer.kt，GPL-3.0-only）。
 
-/** v5 播放模型接口（a 域名，POST + gzip JSON）。 */
+/** 旧的播放模型接口（a 域名，POST + gzip JSON）。 */
 const V5_PLAYER_API = 'https://api5-normal-sinfonlinea.fqnovel.com'
   + '/novel/player/multi_video_model/player/v1';
 
-/** 空响应恢复接口（b 域名，签名 GET，无正文；上游 0.16.10 同款）。 */
+/**
+ * 单集片源接口（主路径）：明文 JSON POST，响应 data.video_model 即本集模型。
+ * 域名属 snssdk.com，仍在 API_DOMAINS 白名单内。
+ */
+const SINGLE_MODEL_API = 'https://reading.snssdk.com/novel/player/video_model/v1/';
+
+/** 空响应恢复接口（b 域名，签名 GET，无正文）。 */
 const VIDEO_TAB_API = 'https://' + VIDEO_API_HOST
   + '/reading/bookapi/video_tab/multi_video_model/v1/';
 
@@ -170,7 +120,7 @@ const CODEC_BYTEVC2 = 'bytevc2';
 const PLAYBACK_INTERVAL_MS = 1000;
 
 /**
- * 播放取流（含匿名注册）共享一条节奏链：上游 6.9 同款。
+ * 播放取流（含匿名注册）共享一条节奏链。
  * 同一时刻只放行一个取流请求，两次之间至少间隔 PLAYBACK_INTERVAL_MS；
  * HTTP 403 / 429 这类整体拒绝会记住这次错误，链上后续排队的请求直接失败，
  * 不再白白多打一轮上游。
@@ -225,28 +175,43 @@ const BVC2_ONLY_MSG = '本集仅提供 ByteVC2（H.266/VVC）片源，浏览器�
  *   BVC2 浏览器解不了，只有「下载到本地」与诊断才需要放行（放行后取到的
  *   仍是标准 mp4，落盘可用支持 VVC 的播放器播放）
  * @returns {Promise<{url,spadeA,encrypt,definition,size,codec}>} 可用轨道；
- *   任何一步失败都抛异常，由调用方决定是否回落老路
+ *   任何一步失败都抛异常，由调用方决定是否回退到其他取流路径
  */
 async function fetch(vid, quality, opts) {
   if (vid === null || vid === undefined || !/^\d{1,30}$/.test(String(vid))) {
     throw new Error('分集编号无效');
   }
 
-  // ---- 1. 播放取流：注册身份 + v5 签名（Medusa/Helios/Khronos）----
-  // 播放身份视为一次性：每次取流注册全新匿名身份（上游 6.6 同款）。
-  const body = zlib.gzipSync(Buffer.from(Json.stringify(v5Payload(vid))));
+  // ---- 1. 播放取流：单集接口 + 便携签名器 ----
+  // 身份进程内复用（见 playback-device.js）。
+  const legacyBody = zlib.gzipSync(Buffer.from(Json.stringify(v5Payload(vid))));
   const model = await paced(async () => {
-    const identity = await getPlaybackDevice({ fresh: true });
+    const identity = await getPlaybackDevice();
+    let firstError = null;
     try {
-      return modelOfPlayer(await postPlaybackV5(body, vid, identity), vid);
+      return modelOfSingle(await postVideoModel(vid, identity), vid);
     } catch (error) {
-      // 空 body（HTTP 200 + 0 字节）是间歇性故障：按上游 0.16.10 的做法，用
-      // 同一个注册身份补一次签名 GET video_tab，只认「就是这一集」的返回。
+      firstError = error;
       if (!isRecoverableEmpty(error)) throw error;
-      const recovered = await recoverFromVideoTab(vid, identity, error);
+    }
+    // 空响应恢复 1：同一个注册身份补一次签名 GET video_tab，只认「就是这一集」
+    try {
+      const recovered = await recoverFromVideoTab(vid, identity, firstError);
       // 空响应已先计入熔断；恢复成功要把它清掉，否则连着几次空就白熔断了
       Guard.reportOk();
       return recovered;
+    } catch (error) {
+      // 只吞掉「恢复也空」的情况，其余错误（限流、业务拒绝）照常上抛
+      if (error !== firstError) throw error;
+    }
+    // 空响应恢复 2：退回旧的 player/v1 POST（同一条新签名链）
+    try {
+      const legacy = modelOfPlayer(await postPlaybackV5(legacyBody, vid, identity), vid);
+      Guard.reportOk();
+      return legacy;
+    } catch (error) {
+      if (!isRecoverableEmpty(error)) throw error;
+      throw firstError;
     }
   });
 
@@ -328,7 +293,7 @@ async function fetch(vid, quality, opts) {
 
   // ---- 4. 逐候选解 URL 与密钥，取第一个可用的 ----
   // 注意返回的 spadeA 契约是「原始 base64 spade_a」——解包由
-  // Stream.offlineDecrypt 统一完成（老路同此约定）。这里只预解一次
+  // Stream.offlineDecrypt 统一完成（与离线解密同一约定）。这里只预解一次
   // 用于判断该候选是否可用，不回存解出的 key。
   let last = null;
   for (const r of ok) {
@@ -392,6 +357,32 @@ function modelOfPlayer(j, vid) {
   return model;
 }
 
+/**
+ * 从单集接口响应里取本集的 video_model。
+ *
+ * 单集路由把模型放在 data.video_model（没有 data.1004[vid] / data[vid] 外层）；
+ * 旧结构仍走 modelOfPlayer，便于两条路径共用一份解析。
+ */
+function modelOfSingle(j, vid) {
+  if (j === null || j === undefined) throw new Error('App 接口响应无效');
+  if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
+    throw businessRejected('App 接口暂未提供本集播放信息');
+  }
+  const data = Json.optObj(j.data);
+  if (data === null || isEmpty(data)) throw new Error('App 接口未返回所选分集');
+  // 单集形态：data.video_model 是本集模型（可能是 JSON 字符串）。
+  // 也有把模型字段直接摊在 data 下的形态，两种都认。
+  const model = asObject(data.video_model);
+  if (!isEmpty(model)) return model;
+  const inline = data.video_list;
+  const inlineObj = Array.isArray(inline) ? null : Json.optObj(inline);
+  const hasInline = Array.isArray(inline)
+    ? inline.length > 0
+    : (inlineObj !== null && Object.keys(inlineObj).length > 0);
+  if (hasInline || parseFallback(data.fallback_api) !== '') return data;
+  return modelOfPlayer(j, vid);
+}
+
 /** 只对「HTTP 200 空 body」做 video_tab 恢复；带 Retry-After 的限流不补请求。 */
 function isRecoverableEmpty(error) {
   return error !== null && error !== undefined
@@ -399,7 +390,7 @@ function isRecoverableEmpty(error) {
 }
 
 /**
- * 空响应恢复：同一个注册身份签名 GET video_tab（上游 0.16.10 / 478f006）。
+ * 空响应恢复：同一个注册身份签名 GET video_tab。
  *
  * 严格只认本集 —— data.video_model_data 里可能只有别的分集，拿它顶替会让
  * 播放器「播出别人的那一集」，所以对不上就原样抛回最初的空响应错误。
@@ -462,6 +453,27 @@ async function recoverFromVideoTab(vid, identity, original) {
 
 // ==================== 请求构造 ====================
 
+/**
+ * 单集接口请求体（对齐参考实现的字段与顺序）。
+ * 与 v5Payload 的差别：device_level=3、用 video_id 单集寻址、无 dr_scene。
+ */
+function singlePayload(vid) {
+  const biz = Json.obj();
+  biz.detail_page_version = 0;
+  biz.device_level = 3;
+  biz.disable_digg_stat = false;
+  biz.need_all_video_definition = true;
+  biz.need_mp4_align = false;
+  biz.use_os_player = false;
+  biz.use_server_dns = false;
+  biz.video_platform = 1024;
+  const out = Json.obj();
+  out.video_id = String(vid);
+  out.content_type = 1;
+  out.biz_param = biz;
+  return out;
+}
+
 /** v5 请求体（device_level=1，带 disable_video_relate_book 与 dr_scene，对齐 hongguoTV）。 */
 function v5Payload(vid) {
   const biz = Json.obj();
@@ -517,9 +529,8 @@ const DEVICE_BASE = {
 
 /**
  * 播放专用设备参数：在 DEVICE_BASE 基础上把客户端版本统一提升到 74332
- * （7.4.3.32，上游 6.6 同款）。UA、query、x-medusa 签名内的设备字段三处
- * 必须一致 —— pure-sign 的 x-medusa 直接取 query 里的 version_name/device_id，
- * 所以 query 用这份参数，签名内的版本自然同步。
+ * （7.4.3.32）。UA、query 与签名头必须使用同一个版本族与同一个 device_id
+ * —— 签名（thl-sign）读的就是调用方传入的这份 query 参数。
  */
 const PLAYBACK_DEVICE = Object.assign({}, DEVICE_BASE, {
   version_code: '74332',
@@ -530,8 +541,8 @@ const PLAYBACK_DEVICE = Object.assign({}, DEVICE_BASE, {
 });
 
 /**
- * video_tab 恢复请求的设备参数：版本字段用 73932 / 7.3.9.32，与注册
- * body 里的版本资料一致（上游 6.7 同款，参考 hongguoTV 的 tabVideoModel）。
+ * video_tab 恢复与单集接口的设备参数：版本字段用 73932 / 7.3.9.32，与注册
+ * body 里的版本资料一致（参考 tsukiyo-zero/hongguoTV 的 tabVideoModel）。
  */
 const VIDEO_TAB_DEVICE = Object.assign({}, DEVICE_BASE, {
   version_code: '73932',
@@ -542,15 +553,10 @@ const VIDEO_TAB_DEVICE = Object.assign({}, DEVICE_BASE, {
 });
 
 /**
- * 合成设备身份仅保留 DEVICE_BASE：播放请求的 iid/device_id 由
- * playback-device 注册提供（2026-10-27 起随机身份会被上游软拦截），
- * 这里不再生成随机 ID。
- */
-
-/**
- * v5 播放请求：注册身份 + v5 签名（Medusa/Helios/Khronos）。
+ * 旧的 v5 播放请求（回退路径）：注册身份 + v5 签名（Medusa/Helios/Khronos）。
  * 单条 POST 到 /novel/player/multi_video_model/player/v1（a 域名），签名头绑定
  * 最终 query 与实际发送的 gzip body；空响应计入熔断（整剧下载不会白等几十次）。
+ * 播放请求的 iid/device_id 一律由 playback-device 注册提供，本模块不生成随机 ID。
  *
  * @param {Buffer} body gzip 压缩体
  * @param {string} vid 分集 id
@@ -594,36 +600,115 @@ async function postPlaybackV5(body, vid, identity) {
       throw error;
     }
     const text = res.text();
-    const j = Json.parseObject(text);
-    const code = j === null ? 0
-      : Number((j.Code !== undefined ? j.Code : (j.code !== undefined ? j.code : 0)) || 0);
-    if ((j !== null && code !== 0) || j === null || Json.optObj(j.data) === null) {
-      // 空响应（HTTP 200 + 空 body 或缺 data）：上游未公开具体原因，文案不给结论。
-      const emptyBody = text.trim() === '';
-      const hint = emptyBody ? '（HTTP 200 空响应，原因尚未确认）' : '';
-      const error = new Error('App 接口未返回 data' + hint
-        + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
-          ? '（原始响应: ' + text + '）' : ''));
-      if (emptyBody) {
-        error.code = 'PLAYBACK_EMPTY_RESPONSE';
-        error.deviceId = identity.device_id;
-        // 有 Retry-After 说明上游在限流：补请求只会加重，交给熔断退避
-        const retryAfter = res.header('Retry-After');
-        error.backoff = retryAfter !== null && retryAfter !== '';
-        Guard.reportEmpty();
-      } else if (j !== null && code !== 0) {
-        error.code = 'BUSINESS_REJECTED';
-        error.businessCode = code;
-      }
-      throw error;
-    }
+    const failure = playbackFailure(res, text, identity);
+    if (failure !== null) throw failure;
     Guard.reportOk();
-    return j;
+    return Json.parseObject(text);
   } finally {
     // 幂等：reportOk / reportEmpty 已复位时这里不会带来副作用
     Guard.releaseProbe();
   }
 }
+
+/**
+ * 单集片源请求（主路径）。
+ *
+ * 与旧 player/v1 的差异：明文 JSON（不 gzip）、query 用 73932 / 7.3.9.32
+ * 设备族并带 ts、签名头由 core/thl-sign.js 产出。响应 data.video_model
+ * 就是本集的模型（没有 1004/vid 外层）。
+ *
+ * @param {string} vid 分集 id
+ * @param {{device_id,iid,cdid}} identity 注册身份
+ * @returns {Promise<object>} 原始响应 JSON
+ */
+async function postVideoModel(vid, identity) {
+  if (!Guard.acquire()) {
+    const blocked = new Error(Guard.blockedMessage());
+    blocked.code = 'PLAYBACK_CIRCUIT_OPEN';
+    blocked.deviceId = identity.device_id;
+    throw blocked;
+  }
+
+  try {
+    const now = Date.now();
+    // signPlaybackV5 内部用同一个 now 推导 khronos，query 的 ts 必须与之一致
+    const values = Object.assign({}, VIDEO_TAB_DEVICE, {
+      iid: identity.iid,
+      cdid: identity.cdid,
+      device_id: identity.device_id,
+      ts: String(Math.floor(now / 1000)),
+    });
+    const body = Buffer.from(Json.stringify(singlePayload(vid)));
+    const signed = PureSign.signPlaybackV5(SINGLE_MODEL_API, values, body, now);
+
+    const headers = {};
+    headers['User-Agent'] = VIDEO_UA;
+    headers.Accept = 'application/json; charset=utf-8,application/x-protobuf';
+    headers['Content-Type'] = 'application/json; charset=UTF-8';
+    headers['x-xs-from-web'] = '0';
+    headers['x-ss-req-ticket'] = String(now);
+    headers['x-tt-request-tag'] = 't=0;n=0';
+    headers['sdk-version'] = '2';
+    headers['passport-sdk-version'] = '50561';
+    headers['x-vc-bdturing-sdk-version'] = '3.7.2.cn';
+    headers['x-ss-stub'] = crypto.createHash('md5').update(body).digest('hex').toUpperCase();
+    headers['x-tt-dt'] = '';
+    Object.assign(headers, signed.headers);
+
+    const res = await Http.send({
+      url: signed.url, method: 'POST', timeoutMs: 15000, headers, body,
+      // 签名头绑定这条 URL：跳到别处签名即失效，直接当失败处理
+      followRedirect: false,
+    });
+    if (res.status !== 200) {
+      const error = new Error('App 接口 HTTP ' + res.status);
+      error.status = res.status;
+      throw error;
+    }
+    const text = res.text();
+    const failure = playbackFailure(res, text, identity);
+    if (failure !== null) throw failure;
+    Guard.reportOk();
+    return Json.parseObject(text);
+  } finally {
+    Guard.releaseProbe();
+  }
+}
+
+/**
+ * 播放响应的统一失败判定：空 body（HTTP 200 + 0 字节）记为
+ * PLAYBACK_EMPTY_RESPONSE 并计入熔断；code 非 0 记为 BUSINESS_REJECTED。
+ *
+ * @param {object} res HTTP 响应
+ * @param {string} text 响应正文
+ * @param {{device_id}} identity 本次使用的身份（挂到错误上便于排障）
+ * @returns {Error|null} 成功返回 null
+ */
+function playbackFailure(res, text, identity) {
+  const j = Json.parseObject(text);
+  const code = j === null ? 0
+    : Number((j.Code !== undefined ? j.Code : (j.code !== undefined ? j.code : 0)) || 0);
+  if (j !== null && code === 0 && Json.optObj(j.data) !== null) return null;
+  // 空响应（HTTP 200 + 空 body 或缺 data）：上游未公开具体原因，文案不给结论。
+  const emptyBody = text.trim() === '';
+  const hint = emptyBody ? '（HTTP 200 空响应，原因尚未确认）' : '';
+  const error = new Error('App 接口未返回 data' + hint
+    + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
+      ? '（原始响应: ' + text + '）' : ''));
+  if (emptyBody) {
+    error.code = 'PLAYBACK_EMPTY_RESPONSE';
+    error.deviceId = identity.device_id;
+    // 有 Retry-After 说明上游在限流：补请求只会加重，交给熔断退避
+    const retryAfter = res.header('Retry-After');
+    error.backoff = retryAfter !== null && retryAfter !== '';
+    Guard.reportEmpty();
+  } else if (j !== null && code !== 0) {
+    error.code = 'BUSINESS_REJECTED';
+    error.businessCode = code;
+  }
+  return error;
+}
+
 /** fallback_api 的普通 GET：不带签名，只带 UA。 */
 async function getPlain(url) {
   const res = await Http.send({

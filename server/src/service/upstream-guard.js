@@ -2,7 +2,7 @@
 /**
  * 上游取流熔断与日志节流。
  *
- * 背景（2026-11-02 实测）：播放接口 multi_video_model/v1 对整批请求返回
+ * 背景：播放接口会对整批请求返回
  * HTTP 200 + 0 字节，6 部不同剧全数如此、响应在 100ms 内返回；匿名设备
  * 注册本身正常，换一个新注册身份也照样空 —— 是上游按请求特征/出口 IP
  * 整体收紧，与「哪一集」「哪个设备身份」都无关。
@@ -93,7 +93,7 @@ function releaseProbe() {
 /** 上报一次成功：退出熔断、清零计数，恢复时打一条 INFO。 */
 function reportOk() {
   if (openUntil !== 0) {
-    Log.info('上游取流已恢复（此前连续 ' + consecutive + ' 次空响应，'
+    Log.info('上游取流已恢复（连续 ' + consecutive + ' 次空响应后，'
       + '熔断 ' + Math.round(openMs / 1000) + ' 秒）');
   }
   consecutive = 0;

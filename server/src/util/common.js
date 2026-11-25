@@ -2,7 +2,7 @@
 /**
  * 跨模块共用的小工具。
  *
- * 存在的目的：这些能力此前在多个文件里各自实现了一份
+ * 存在的目的：这些能力若在多个文件里各写一份
  * （sleep / readFully / escapeRe / LRU 缓存），属于项目内部重复造轮子。
  * 统一收敛到这里，避免行为随时间分叉。
  *
@@ -60,7 +60,7 @@ function escapeRe(s) {
 
 /**
  * 取异常文案：Error 用 message，其余原样转字符串；null/undefined 返回 'null'。
- * 此前 stream.js 与 download.js 各有一份相同实现，统一收敛到这里。
+ * 各模块统一调用这里，不再各写一份。
  */
 function errMsg(e) {
   if (e === null || e === undefined) return 'null';
@@ -72,11 +72,9 @@ function errMsg(e) {
 /**
  * 访问序 LRU + 容量上限缓存。
  *
- * 合并了此前两套独立实现：
- *  - safeguards 的 cacheGet/cacheSet/trim（条数 + 字节双上限，带 TTL）
- *  - server.js 的 imgCache（条数/字节上限，无 TTL）
- * 因此同时支持「最多 N 条」「最多 N 字节」「每条 TTL」三种约束，
- * 且都可单独关闭（传 0 或 Infinity）。
+ * 支持「最多 N 条」「最多 N 字节」「每条 TTL」三种约束，每个都可单独关闭
+ * （传 0 或 Infinity）：列表缓存用条数 + 字节双上限带 TTL，图片缓存只用
+ * 条数/字节上限、不设 TTL。
  *
  * 结构约定：Map 头部是最久未访问的，命中后删除重插到尾部。
  */

@@ -1,11 +1,10 @@
 'use strict';
 /**
- * 播放专用真实签名：551 Argus + Ladon（替代此前的「4 字节时间戳占位」）。
+ * 播放专用真实签名：551 Argus + Ladon。
  *
- * 背景（2026-11-11）：6.9 之前 x-argus / x-ladon 只是 be32/le32(khronos) 的
- * base64 占位，不是上游真正校验的签名。上游收紧后，播放接口对占位签名一律
- * 回 HTTP 200 + 0 字节（表现和「限流 / 熔断」一模一样），换身份、换路径、
- * 换出口都没用。
+ * 为什么需要：x-argus / x-ladon 不能用 be32/le32(khronos) 的 base64 占位，
+ * 播放接口对占位签名一律回 HTTP 200 + 0 字节（表现和「限流 / 熔断」一模一样），
+ * 换身份、换路径、换出口都没用。
  *
  * 算法来源：jackotom/hongguo-drama 6.9 的 src/native/playback-signature.js，
  * 其上游为 N3urda/hongguoTV 7444bb01（Argus.kt）与 ch6vip/fqapp 的

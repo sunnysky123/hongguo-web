@@ -6,10 +6,9 @@
  *  - /search/{keyword}      内嵌 _ROUTER_DATA.searchList（搜索结果）
  *  - /player/{series_id}    内嵌 vid_list（完整分集 vid 列表）与 series_name
  *
- * 播放直链历史上也在 /player/{sid}/{vid} 页内（main_url，明文 MP4），
- * 但官网改版后 SSR 已不再输出该字段，仅剩 360p 预览 contentUrl
- * （付费集下载即 404），故播放取址不再走官网，统一由 AppSource 负责
- * （见 Stream.videoTrack）。官网数据现仅用于搜索与分集列表。
+ * 分集页 SSR 不输出可用的播放直链（main_url 已不输出，仅剩 360p 预览
+ * contentUrl，付费集下载即 404），故播放取址不走官网，统一由 AppSource
+ * 负责（见 Stream.videoTrack）。官网数据只用于搜索与分集列表。
  *
  * 参考实现：jackotom/hongguo-drama src/native/hongguo.js（GPL-3.0）。
  */
@@ -93,7 +92,7 @@ async function episodes(seriesId) {
     const am = /"accessible_episode_cnt"\s*:\s*(\d+)/.exec(html);
     const accessible = am ? Math.min(parseInt(am[1], 10), vids.length) : null;
     // 富信息：官网分集页内嵌的剧集 JSON 里其实有简介、标签与连载状态，
-    // 此前只取了标题/封面，回落时简介就成了空串（前端「简介」按钮消失）。
+    // 标题/封面之外还要取简介等字段，否则回落时简介是空串（前端「简介」按钮消失）。
     const intro = pickJsonText(html, 'series_intro');
     const tags = pickJsonStringArray(html, 'tags');
     const info = pickJsonObjectBlock(html, 'series_episode_info');

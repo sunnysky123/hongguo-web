@@ -527,7 +527,7 @@
    * 首屏渲染后重置分页上下文并把 offset 推到已加载条数。
    *
    * 这两步必须一起做（详见 seedInf 注释），四处列表页（榜单 / 最新 / 筛选 /
-   * 搜索）此前各自抄了一遍，容易漏掉其中一步。可以顺带挂上续页函数与
+   * 搜索）必须走同一处，各自实现容易漏掉其中一步。可以顺带挂上续页函数与
    * 「加载更多」卡片。
    *
    * @param {Array} items 首屏条目（用于登记 id 与推算 offset）
@@ -586,7 +586,7 @@
       const b = chip.dataset.b;
       if (!b) return;
       // 先就地高亮并把网格换成加载中，section-head 保持不动，
-      // 按钮不会在等待响应期间消失（这正是原先的 bug）
+      // 按钮不会在等待响应期间消失
       box.querySelectorAll('.chip').forEach((c) => c.classList.toggle('on', c === chip));
       const grid = $('grid');
       if (grid) grid.innerHTML = '<div class="loading">加载中…</div>';
@@ -880,7 +880,7 @@
    * playAt 还没跑完的窗口期）。此时若照常算 index+1 会显示成「第 0 集」，
    * 属于明显的错误文案，改为显示总集数。
    * 简介与制作方不在这里承载：分别由「简介」「制作方」按钮的悬浮气泡负责，
-   * 标题行高度恒定（此前常驻文案会在 playAt 二次刷新时抖动）。
+   * 标题行高度恒定（常驻文案会在 playAt 二次刷新时抖动）。
    */
   function updatePMeta() {
     const total = ctx.episodes.length;
@@ -940,8 +940,8 @@
   /**
    * 把贴附卡片定位到锚点按钮旁边。
    *
-   * 四张卡片（简介/制作方气泡、选集、下载范围、其他季）此前各抄了一份
-   * 相同的「水平夹紧 + 上下翻转」逻辑，任何一处调整都要改四遍。
+   * 四张卡片（简介/制作方气泡、选集、下载范围、其他季）共用同一份
+   * 「水平夹紧 + 上下翻转」逻辑，避免任何一处调整都要改四遍。
    * 统一到这里：水平左缘对齐锚点并在视口内夹紧；垂直优先 prefer='down'
    * 或 'up'，放不下就翻到另一侧，两侧都放不下则贴边。
    *
@@ -1863,8 +1863,7 @@
     if (!dlModal.hidden
       && !dlModal.contains(e.target) && !$('pDlBtn').contains(e.target)) closeDlModal();
   });
-  // Esc 关闭统一由下方的 keydown 块处理（dlModal 与 dlProgModal 一起管，
-  // 此前这里另挂了一个只管 dlModal 的监听，属于重复）
+  // Esc 关闭统一由下方的 keydown 块处理（dlModal 与 dlProgModal 一起管）
   window.addEventListener('resize', () => { if (!dlModal.hidden) placeDlCard(); });
   $('dlBtn').addEventListener('click', openDlProg);
   $('dlProgClose').addEventListener('click', closeDlProg);
