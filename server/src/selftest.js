@@ -842,8 +842,8 @@ function streamCacheLimit() {
 
 /**
  * 19. 搜索分页切片（skip 必须真正生效）。
- * 背景：searchPage 原先完全忽略 skip，每次都从上游第一页抓、
- * 返回同一批前 limit 条。这里直接验证 Page.slice 的切片与 has_more 判据。
+ * 忽略 skip 会让每次翻页都从上游第一页抓、返回同一批前 limit 条。
+ * 这里直接验证 Page.slice 的切片与 has_more 判据。
  */
 function searchPageSlice() {
   section('18. 搜索分页切片（skip 生效且 has_more 判据正确）');
@@ -909,7 +909,7 @@ function appSource() {
     d.iid === undefined && d.device_id === undefined, '');
 
   const pd = AppSource.PLAYBACK_DEVICE;
-  check('播放设备参数: version_code=74332（2026-11-10 上游 6.6 请求格式）',
+  check('播放设备参数: version_code=74332（播放请求格式）',
     String(pd.version_code) === '74332', '');
   check('播放设备参数: version_name=7.4.3.32（与 UA、签名内设备字段一致）',
     String(pd.version_name) === '7.4.3.32', '');
@@ -926,7 +926,7 @@ function appSource() {
     AppSource.PLAYBACK_UA);
 
   const vt = AppSource.VIDEO_TAB_DEVICE;
-  check('video_tab 设备参数: 版本族为 73932 / 7.3.9.32（上游 6.7 恢复路径）',
+  check('video_tab 设备参数: 版本族为 73932 / 7.3.9.32（视频恢复路径）',
     String(vt.version_code) === '73932' && String(vt.version_name) === '7.3.9.32'
     && String(vt.manifest_version_code) === '73932'
     && String(vt.update_version_code) === '73932'
@@ -1514,7 +1514,7 @@ async function run() {
   console.log('  托管模式     ' + Client.MANAGED);
   console.log('  列表签名     ' + (Client.SIGN_LIST ? '开启（上游 landpage 需签名，关闭会返回 0 字节）' : '关闭'));
   console.log('  签名方式     本地纯代码签名（PureSign）');
-  console.log('  播放签名     v5 Medusa + Helios + Khronos（PureSign）');
+  console.log('  播放签名     v5 Medusa + Helios + Khronos（thl-sign 便携签名器）');
   console.log('  转码         不转码（源流 H.264 / HEVC 直出）');
   console.log('  Node         ' + process.version);
 

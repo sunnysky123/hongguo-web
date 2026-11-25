@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.3.4` 为例） |
+| 你的系统 | 下载的文件（`1.3.5` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.4-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.4-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.4-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.4-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.4-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.4-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.4-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.3.5-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.3.5-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.3.5-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.3.5-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.3.5-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.3.5-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.3.5-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.3.4-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.3.5-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.3.4-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.3.5-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -833,29 +833,25 @@ a 域名 `novel/player/multi_video_model/player/v1`（gzip JSON 正文），签�
 的网络问题（DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
 看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
-排查时先核对上游端点路径（取直链为 a 域名
-`novel/player/multi_video_model/player/v1`，空响应恢复为 b 域名
-`reading/bookapi/video_tab/multi_video_model/v1/`，其余为 `preload/v1`）。
+排查时先核对上游端点：取直链为单集接口 `reading.snssdk.com`
+`novel/player/video_model/v1/`，空响应恢复为 b 域名
+`reading/bookapi/video_tab/multi_video_model/v1/`，回退路径为 a 域名
+`novel/player/multi_video_model/player/v1`，其余为 `preload/v1`。
 
-**2026-11-24 起（对齐上游 0.16.14 / ef328f3，Issue #102）：v5 medusa 的 wire
-field 21 从 `377` 改为 `312`**（`core/pure-sign.js` 的 `V5_FIELD21`）。上游抓包
-A/B 显示官方 App 与独立 SDK 的成功请求里该字段都是 protobuf 原值 624（zigzag
-有符号 312），`377` 只有 Kotlin 实现用过，服务端对这类请求一律回 HTTP 200 + 0
-字节。这正是 11-16 之后空响应再次出现的原因：实测报错分集修复前空响应、
-修复后约 0.7 秒返回 1080p 完整模型。上游同版本还把取流端点换到
-`reading.snssdk.com` 的 `preload/v1`（`74532` 版本族、`device_level=2`、
-`dr_scene=preload`），但其研究记录明确指出该路径**不是**判别变量（同一份签名
-改回 `player/v1` 照样成功），只改 field 21 即可恢复，因此本项目仍走原 a 域名
-`player/v1`、版本族与请求体形态不变。
+**播放签名由 `core/thl-sign.js` 产出**：`x-khronos` / `x-helios` / `x-medusa`
+三个头来自内嵌的便携签名器（来源见「致谢」与文件头说明），本进程不再自行
+拼 v5 medusa。上游对签名结构敏感 —— 同一 query / body / 注册身份下，签名
+不是这套封装就会被判为无效，表现为 HTTP 200 + 0 字节。改播放签名相关代码时，
+务必连同 `thl-sign.js` 一起核对。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
-取直链已统一改走 App 取址链路（`AppSource`：a 域名
-`novel/player/multi_video_model/player/v1` 的 v5 签名 POST 为主；空 body 时用
-同一身份补一次 b 域名 `video_tab/multi_video_model/v1/` 签名 GET，且只认本集；
-片源内联在 `video_model.video_list` 时直接使用，否则跟随 `fallback_api` 二次
-请求；媒体 URL 带 `key_seed` 时自动解密）。
+取直链已统一改走 App 取址链路（`AppSource`：单集接口
+`reading.snssdk.com/novel/player/video_model/v1/` 的签名 POST 为主；空 body 时
+用同一身份补一次 b 域名 `video_tab/multi_video_model/v1/` 签名 GET，且只认本集；
+仍空则回退 a 域名 `player/v1`；片源内联在 `video_model.video_list` 时直接使用，
+否则跟随 `fallback_api` 二次请求；媒体 URL 带 `key_seed` 时自动解密）。
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
@@ -1010,6 +1006,7 @@ A：不用填。收到 401 时前端会自动换新密钥并重新加载，卡�
 - **[hongguo-desktop-releases](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases)** —— 桌面端版本，提供了本项目最初的分析起点与对照实现，感谢原作者的分享。
 - **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/pure-sign.js` 与 `service/web-source.js` 移植自此；播放专用签名（551 Argus + Ladon）移植自其 6.9 版本的 `src/native/playback-signature.js`（实现源自 N3urda/hongguoTV 与 ch6vip/fqapp，GPL-3.0-only），对应本项目 `core/playback-sign.js`。
 - **[N3urda/hongguoTV](https://github.com/N3urda/hongguoTV)** —— Android TV 端实现，提供了 v5 播放签名（Medusa / Helios / Khronos，`SIGNING_V5.md` / `Signer.kt` / `MobilePlayback.kt`）的参考实现，本项目 `core/pure-sign.js` 的 v5 播放签名与 `service/app-source.js` 的 v5 取流链路移植自此（GPL-3.0-only），感谢原作者的分享。
+- **[never88gone/THLRedGuo](https://github.com/never88gone/THLRedGuo)** —— 官方短剧 JS 数据源（发布标签 [`official-source`](https://github.com/never88gone/THLRedGuo/releases/tag/official-source)，资产 `hongguo.js`）。2026-11-25 起上游开始拒绝此前移植的 v5 x-medusa，本项目改用该数据源中标注 `THL_PORTABLE_APP_BEGIN` 的便携签名器：`core/thl-sign.js` 即由该区域原样内嵌生成（GPL-3.0-only，仅加一层作用域导出，算法与常量未改），`service/app-source.js` 的单集取流路由（`novel/player/video_model/v1/`，明文 JSON + `device_level=3`）与空响应处理顺序也同步自该实现。感谢原作者的分享。
 
 ---
 

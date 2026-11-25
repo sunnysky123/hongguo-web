@@ -646,10 +646,10 @@ class Server {
     // POST /download/task  启动任务：{series_id, start?, end?}，后台执行，立即返回任务快照
     // GET  /download/task?id=  查询进度：done/total/failed/status
     //
-    // 单集下载也走这里（start === end）。原先的同步 GET /download?vid= 已删除：
-    // 它把成品写进播放缓存 server/stream-cache（受 LRU 上限清理），回给用户的
-    // 路径随时会被后续播放挤掉；而任务制落盘在 download/<剧名>/第N集.mp4，
-    // 不受缓存清理影响，还能在顶栏「⤓」里看到进度。
+    // 单集下载也走这里（start === end）。下载不走同步直出：那样成品只能写进
+    // 播放缓存 server/stream-cache（受 LRU 上限清理），回给用户的路径随时会被
+    // 后续播放挤掉；任务制落盘在 download/<剧名>/第N集.mp4，不受缓存清理影响，
+    // 还能在顶栏「⤓」里看到进度。
     if (pathname === '/download/task') {
       if (method === 'POST') {
         const payload = await readJson(req);

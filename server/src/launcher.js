@@ -117,8 +117,8 @@ async function main(args = process.argv.slice(2)) {
  * 逻辑在 bat 里重写一份。这里直接用刚启动的端口即可。
  *
  * 监听 0.0.0.0 时必须改用 127.0.0.1：0.0.0.0 是"监听所有网卡"的
- * 通配地址，浏览器拿它当目标去连会直接失败（与 bat 里原先
- * HG_BROWSER_HOST 的处理一致）。
+ * 通配地址，浏览器拿它当目标去连会直接失败（与 bat 里 HG_BROWSER_HOST
+ * 的处理一致）。
  *
  * 单独起异步任务轮询 /health：Server.start() 返回时端口已经在听，
  * 但前端页面还要等密钥就绪才能真正可用，过早打开
@@ -127,10 +127,9 @@ async function main(args = process.argv.slice(2)) {
 function openBrowserWhenReady(apiPort) {
   const host = browserHost();
   const url = 'http://' + host + ':' + apiPort + '/ui';
-  // 探活地址必须与浏览器地址同源。此前硬编码 127.0.0.1，
-  // 而服务绑定的是 api.host —— 若用户把 api.host 配成局域网 IP，
-  // 服务只在那个 IP 上监听，探 127.0.0.1 永远连不上，
-  // 表现就是"服务正常但浏览器一直不开"。
+  // 探活地址必须与浏览器地址同源。写死 127.0.0.1 会出错：服务绑定的是
+  // api.host —— 若用户把 api.host 配成局域网 IP，服务只在那个 IP 上监听，
+  // 探 127.0.0.1 永远连不上，表现就是「服务正常但浏览器一直不开」。
   const health = 'http://' + host + ':' + apiPort + '/health';
   Log.info('就绪后自动打开 ' + url);
   return (async () => {
@@ -713,6 +712,5 @@ function waitExit(pid, timeoutMs) {
 /** 异步睡眠（带 unref，不阻止进程退出）；实现见 util/common。 */
 const sleep = sleepUnref;
 
-// 只导出 main：此前内部函数全部挂在导出表上（stop 与 stopRunning 还是同一
-// 函数导了两次），但全仓库只有 main.js 引用 main，其余成员已收敛回私有。
+// 只导出 main：内部函数保持私有，全仓库只有 main.js 引用它。
 module.exports = { main };

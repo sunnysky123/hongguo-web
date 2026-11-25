@@ -1122,8 +1122,8 @@ async function latestPage(genre, onlyToday, maxItems, refresh, seenIds, skip) {
   const paged = skip > 0 || (seenIds !== null && seenIds !== undefined && seenIds.length > 0);
   if (!refresh && !paged) {
     const c = Safeguards.cacheGet(ck);
-    // 命中时 nextSkip 必须按本页条数推进：此前固定返回 0，会让调用方
-    // 带着 offset=0 再请求一次首屏（目前靠前端兜底，属隐性耦合）。
+    // 命中时 nextSkip 必须按本页条数推进：返回 0 会让调用方带着 offset=0
+    // 再请求一次首屏（靠前端兜底属隐性耦合）。
     if (c !== null) return new Page(c, true, c.length);
   }
 

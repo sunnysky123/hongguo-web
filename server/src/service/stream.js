@@ -341,9 +341,9 @@ async function prewarmOnce(vid, quality) {
         await AppSource.resetPlaybackDevice(last.deviceId);
       } else if (last !== null && last.code === 'PLAYBACK_EMPTY_RESPONSE'
           && Guard.shouldRotateDevice(last.deviceId)) {
-        // 空响应时换设备身份对当前这轮限流无效（2026-11-02 实测：换新身份
-        // 照样空），而每次失败都重新注册会连着打注册接口、更像异常客户端。
-        // 因此同一身份 60 秒内只换一次。
+        // 空响应时换设备身份对当前这轮限流无效（换新身份照样空），而每次
+        // 失败都重新注册会连着打注册接口、更像异常客户端。因此同一身份
+        // 60 秒内只换一次。
         await AppSource.resetPlaybackDevice(last.deviceId);
         Guard.warn('播放接口返回空响应，重新注册匿名播放设备后重试');
       }
@@ -381,8 +381,8 @@ function isUpstreamShed(e) {
     && (e.code === 'PLAYBACK_EMPTY_RESPONSE' || e.code === 'PLAYBACK_CIRCUIT_OPEN');
 }
 
-/** 输出「预热最终失败」日志：上游成片故障走节流，其余照常。此前两条重试
- * 路径（队列执行位与满载降级）各写了一遍相同文案，收敛到这里。 */
+/** 输出「预热最终失败」日志：上游成片故障走节流，其余照常。
+ * 队列执行位与满载降级两条重试路径共用这里，避免文案各写一遍。 */
 function prewarmFailLog(vid, e) {
   const msg = '预热最终失败 ' + vid + '：已重试 ' + PREWARM_MAX_RETRIES
     + ' 次仍不成功，' + errMsg(e);
@@ -572,7 +572,7 @@ function pruneCache(limit) {
         Log.warn('缓存清理：删除 ' + victim.name + ' 失败：' + errMsg(e));
       }
     }
-    // 正常清理不打印日志（此前每次清理都会向控制台输出一行）
+    // 正常清理不打印日志，避免淹没真正有用的信息
     return deleted;
   } catch (e) {
     // 清理是尽力而为，失败不应影响播放
