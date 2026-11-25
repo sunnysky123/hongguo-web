@@ -833,29 +833,25 @@ a 域名 `novel/player/multi_video_model/player/v1`（gzip JSON 正文），签�
 的网络问题（DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
 看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
-排查时先核对上游端点路径（取直链为 a 域名
-`novel/player/multi_video_model/player/v1`，空响应恢复为 b 域名
-`reading/bookapi/video_tab/multi_video_model/v1/`，其余为 `preload/v1`）。
+排查时先核对上游端点：取直链为单集接口 `reading.snssdk.com`
+`novel/player/video_model/v1/`，空响应恢复为 b 域名
+`reading/bookapi/video_tab/multi_video_model/v1/`，回退路径为 a 域名
+`novel/player/multi_video_model/player/v1`，其余为 `preload/v1`。
 
-**2026-11-24 起（对齐上游 0.16.14 / ef328f3，Issue #102）：v5 medusa 的 wire
-field 21 从 `377` 改为 `312`**（`core/pure-sign.js` 的 `V5_FIELD21`）。上游抓包
-A/B 显示官方 App 与独立 SDK 的成功请求里该字段都是 protobuf 原值 624（zigzag
-有符号 312），`377` 只有 Kotlin 实现用过，服务端对这类请求一律回 HTTP 200 + 0
-字节。这正是 11-16 之后空响应再次出现的原因：实测报错分集修复前空响应、
-修复后约 0.7 秒返回 1080p 完整模型。上游同版本还把取流端点换到
-`reading.snssdk.com` 的 `preload/v1`（`74532` 版本族、`device_level=2`、
-`dr_scene=preload`），但其研究记录明确指出该路径**不是**判别变量（同一份签名
-改回 `player/v1` 照样成功），只改 field 21 即可恢复，因此本项目仍走原 a 域名
-`player/v1`、版本族与请求体形态不变。
+**播放签名由 `core/thl-sign.js` 产出**：`x-khronos` / `x-helios` / `x-medusa`
+三个头来自内嵌的便携签名器（来源见「致谢」与文件头说明），本进程不再自行
+拼 v5 medusa。上游对签名结构敏感 —— 同一 query / body / 注册身份下，签名
+不是这套封装就会被判为无效，表现为 HTTP 200 + 0 字节。改播放签名相关代码时，
+务必连同 `thl-sign.js` 一起核对。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
-取直链已统一改走 App 取址链路（`AppSource`：a 域名
-`novel/player/multi_video_model/player/v1` 的 v5 签名 POST 为主；空 body 时用
-同一身份补一次 b 域名 `video_tab/multi_video_model/v1/` 签名 GET，且只认本集；
-片源内联在 `video_model.video_list` 时直接使用，否则跟随 `fallback_api` 二次
-请求；媒体 URL 带 `key_seed` 时自动解密）。
+取直链已统一改走 App 取址链路（`AppSource`：单集接口
+`reading.snssdk.com/novel/player/video_model/v1/` 的签名 POST 为主；空 body 时
+用同一身份补一次 b 域名 `video_tab/multi_video_model/v1/` 签名 GET，且只认本集；
+仍空则回退 a 域名 `player/v1`；片源内联在 `video_model.video_list` 时直接使用，
+否则跟随 `fallback_api` 二次请求；媒体 URL 带 `key_seed` 时自动解密）。
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
